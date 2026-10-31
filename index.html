@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>いろよみ</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="いろよみ">
+<meta name="theme-color" content="#26303a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+/* Layout: one-screen app, chalkboard slate ground; a big word card in the middle, large touch targets below */
+:root{
+  color-scheme: dark;
+  --bg:#26303a; --panel:#313c48; --line:#435060; --fg:#f2efe6; --muted:#a9b3bd; --accent:#f2efe6;
+  --c-red:#ff5f52; --c-blue:#5b9bff; --c-yellow:#ffd43b; --c-green:#3fd27a; --c-purple:#c27bff; --c-white:#f7f7f2;
+  --ok:#3fd27a; --ng:#ff5f52;
+  --f-word:"Hiragino Maru Gothic ProN","Hiragino Maru Gothic Pro","Hiragino Sans","Noto Sans JP",sans-serif;
+  --f-ui:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);font-size:18px;
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;overflow:hidden}
+.app{height:100%;display:flex;flex-direction:column;box-sizing:border-box;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px}
+.screen{flex:1;display:flex;flex-direction:column;min-height:0;gap:16px;max-width:980px;width:100%;margin:0 auto}
+button{font:inherit;color:inherit;border:0;cursor:pointer;touch-action:manipulation}
+button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+
+/* home */
+.brand{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;padding-top:8px}
+.brand h1{font-family:var(--f-word);font-weight:800;font-size:clamp(40px,7vw,64px);margin:0;letter-spacing:.04em}
+.brand h1 span:nth-child(1){color:var(--c-blue)} .brand h1 span:nth-child(2){color:var(--c-yellow)}
+.brand h1 span:nth-child(3){color:var(--c-green)} .brand h1 span:nth-child(4){color:var(--c-red)}
+.brand p{margin:0;color:var(--muted);font-size:17px}
+.rule{background:var(--panel);border-radius:14px;padding:14px 18px;line-height:1.7;font-size:17px}
+.rule b{font-family:var(--f-word);font-size:22px;color:var(--c-red)}
+.lv{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.lv .lab{color:var(--muted);font-size:16px;margin-right:4px}
+.seg{background:var(--panel);border:2px solid var(--line);border-radius:999px;padding:10px 20px;font-size:18px}
+.seg[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg);font-weight:700}
+.modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.mode{background:var(--panel);border:2px solid var(--line);border-radius:18px;padding:20px;text-align:left;display:flex;flex-direction:column;gap:8px}
+.mode:active{transform:scale(.98)}
+.mode h2{margin:0;font-size:24px;font-family:var(--f-word)}
+.mode p{margin:0;color:var(--muted);font-size:16px;line-height:1.6}
+.mode .best{margin-top:6px;font-size:15px;color:var(--fg);font-variant-numeric:tabular-nums}
+.hist{color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums;line-height:1.7;overflow:auto;min-height:0}
+
+/* play bar */
+.bar{display:flex;align-items:center;gap:12px}
+.bar .back{background:var(--panel);border-radius:999px;padding:10px 18px;font-size:17px}
+.bar .info{flex:1;color:var(--muted);font-size:17px;text-align:center}
+.timer{font-variant-numeric:tabular-nums;font-size:26px;font-weight:700;min-width:5ch;text-align:right}
+
+/* list mode */
+.grid{flex:1;display:grid;gap:10px;min-height:0;align-content:stretch}
+.cell{background:var(--panel);border-radius:14px;display:flex;align-items:center;justify-content:center;
+  font-family:var(--f-word);font-weight:800;font-size:clamp(34px,6.4vw,72px);transition:opacity .15s,transform .1s}
+.cell.done{opacity:.18;transform:scale(.94)}
+.hint{text-align:center;color:var(--muted);font-size:16px;margin:0}
+.go{background:var(--fg);color:var(--bg);border-radius:16px;padding:18px;font-size:22px;font-weight:700}
+
+/* one-by-one mode */
+.stage{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative}
+.word{font-family:var(--f-word);font-weight:800;font-size:clamp(110px,24vw,240px);line-height:1}
+.stage.ok::after,.stage.ng::after{position:absolute;top:8%;font-size:40px;font-weight:700}
+.stage.ok::after{content:"○";color:var(--ok)} .stage.ng::after{content:"×";color:var(--ng)}
+.stage.ng .word{animation:shake .3s}
+@keyframes shake{25%{transform:translateX(-12px)}75%{transform:translateX(12px)}}
+.answers{display:grid;gap:12px}
+.ans{background:var(--panel);border:2px solid var(--line);border-radius:16px;padding:20px 8px;
+  font-family:var(--f-word);font-size:clamp(26px,4vw,36px);font-weight:700;color:var(--fg);display:flex;align-items:center;justify-content:center;gap:10px}
+.ans i{width:22px;height:22px;border-radius:50%;display:inline-block;flex:none}
+.ans:active{background:var(--line)}
+.progress{height:8px;background:var(--panel);border-radius:999px;overflow:hidden}
+.progress div{height:100%;background:var(--fg);width:0;transition:width .2s}
+
+.heard{min-height:2.4em;text-align:center;color:var(--muted);font-size:20px;line-height:1.4}
+.heard b{color:var(--fg)}
+.mic{display:flex;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:17px}
+.mic i{width:14px;height:14px;border-radius:50%;background:var(--muted);flex:none}
+.mic.on i{background:var(--c-red);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.3}}
+.skip{background:var(--panel);border-radius:14px;padding:14px 24px;font-size:18px;align-self:center}
+.mode[disabled]{opacity:.45}
+.err{background:var(--panel);border:2px solid var(--c-red);border-radius:14px;padding:14px 18px;line-height:1.7;font-size:17px}
+/* result */
+.result{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center}
+.result .big{font-size:clamp(64px,12vw,110px);font-weight:800;font-variant-numeric:tabular-nums;font-family:var(--f-word)}
+.result .sub{color:var(--muted);font-size:20px}
+.result .badge{background:var(--c-yellow);color:#26303a;border-radius:999px;padding:6px 18px;font-weight:700}
+.row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+.row .alt{background:var(--panel);border-radius:16px;padding:18px 26px;font-size:20px}
+
+/* countdown */
+.count{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);
+  font-family:var(--f-word);font-size:160px;font-weight:800;z-index:5}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+</head>
+<body>
+<div class="app" id="app"></div>
+<div class="count" id="count" hidden></div>
+
+<script>
+const COLORS=[
+  {k:"赤",v:"var(--c-red)"},{k:"青",v:"var(--c-blue)"},{k:"黄",v:"var(--c-yellow)"},
+  {k:"緑",v:"var(--c-green)"},{k:"紫",v:"var(--c-purple)"},{k:"白",v:"var(--c-white)"}];
+const QN=20;
+const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+let level=store.get("iroyomi.level",4);
+const app=document.getElementById("app");
+let tick=null,wake=null;
+
+const fmt=ms=>(ms/1000).toFixed(1)+"秒";
+const pal=()=>COLORS.slice(0,level);
+const rnd=n=>Math.floor(Math.random()*n);
+function makeItems(n){
+  const p=pal(),out=[];
+  while(out.length<n){
+    const w=rnd(p.length);let c=rnd(p.length-1);if(c>=w)c++;
+    const prev=out[out.length-1];
+    if(prev&&(prev.w===w||prev.c===c))continue;
+    out.push({w,c});
+  }return out;
+}
+async function keepAwake(){try{wake=await navigator.wakeLock?.request("screen")}catch(e){}}
+function release(){try{wake?.release()}catch(e){}wake=null}
+function stopTimer(){clearInterval(tick);tick=null}
+function key(mode){return `iroyomi.${mode}.${level}`}
+function record(mode,ms,miss){
+  const r=store.get(key(mode),{best:null,log:[]});
+  const isBest=miss===0&&(r.best===null||ms<r.best);
+  if(isBest)r.best=ms;
+  const d=new Date();
+  r.log.unshift({t:ms,m:miss,d:`${d.getMonth()+1}/${d.getDate()}`});r.log=r.log.slice(0,8);
+  store.set(key(mode),r);return isBest;
+}
+
+function home(){
+  stopTimer();release();if(typeof stopVoice==='function')stopVoice();
+  const L=store.get(key("list"),{best:null,log:[]}),O=store.get(key("one"),{best:null,log:[]}),V=store.get(key("voice"),{best:null,log:[]});
+  const logs=[...V.log.map(x=>({...x,n:"声"})),...L.log.map(x=>({...x,n:"一覧"})),...O.log.map(x=>({...x,n:"1問ずつ"}))].slice(0,6);
+  app.innerHTML=`<div class="screen">
+   <div class="brand"><h1><span>い</span><span>ろ</span><span>よ</span><span>み</span></h1><p>文字ではなく「色」を答える脳トレ</p></div>
+   <div class="rule">例：<b>青</b> と赤い色で書いてあったら「あか」と声に出して答えます。文字につられないのがコツです。</div>
+   <div class="lv"><span class="lab">使う色</span>
+     <button class="seg" data-lv="4" aria-pressed="${level===4}">4色（やさしい）</button>
+     <button class="seg" data-lv="6" aria-pressed="${level===6}">6色（むずかしい）</button></div>
+   <div class="modes">
+     <button class="mode" id="mList"><h2>一覧で読み上げ</h2>
+       <p>${QN}個の文字が並びます。左上から順に色を声に出し、言えたら指でタップ。全部消えたらタイム確定。</p>
+       <div class="best">ベスト ${L.best?fmt(L.best):"―"}</div></button>
+     <button class="mode" id="mOne"><h2>1問ずつボタンで</h2>
+       <p>文字が1つずつ出ます。色を声に出しながら、その色のボタンを押します。${QN}問のタイムとまちがい数。</p>
+       <div class="best">ベスト ${O.best?fmt(O.best):"―"}（ノーミス）</div></button>
+     <button class="mode" id="mVoice" ${SR?"":"disabled"}><h2>声で答える（試験版）</h2>
+       <p>${SR?`文字が1つずつ出ます。色を声に出すだけで自動で判定して次へ進みます。${QN}問のタイムとまちがい数。`:"このブラウザでは音声認識が使えません。iPadのSafariで開いてください。"}</p>
+       <div class="best">ベスト ${V.best?fmt(V.best):"―"}（ノーミス）</div></button>
+   </div>
+   ${logs.length?`<div class="hist">最近の記録（${level}色）　${logs.map(x=>`${x.d} ${x.n} ${fmt(x.t)}${x.m?`・ミス${x.m}`:""}`).join("　／　")}</div>`:""}
+  </div>`;
+  app.querySelectorAll(".seg").forEach(b=>b.onclick=()=>{level=+b.dataset.lv;store.set("iroyomi.level",level);home()});
+  mList.onclick=()=>countdown(playList);
+  mOne.onclick=()=>countdown(playOne);
+  if(SR)mVoice.onclick=startVoice;
+}
+
+function countdown(next){
+  const el=document.getElementById("count");let n=3;el.hidden=false;el.textContent=n;keepAwake();
+  const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;next()}else el.textContent=n},700);
+}
+
+function bar(info){
+  return `<div class="bar"><button class="back" id="back">← やめる</button><div class="info">${info}</div><div class="timer" id="tm">0.0</div></div>`;
+}
+function startClock(){
+  const t0=performance.now();
+  tick=setInterval(()=>{const e=document.getElementById("tm");if(e)e.textContent=((performance.now()-t0)/1000).toFixed(1)},100);
+  return t0;
+}
+
+function playList(){
+  const items=makeItems(QN);let left=QN;
+  const cols=window.innerWidth<600?4:5;
+  app.innerHTML=`<div class="screen">${bar("色を声に出して、言えたらタップ")}
+    <div class="grid" style="grid-template-columns:repeat(${cols},1fr)">${items.map((it,i)=>
+      `<button class="cell" data-i="${i}" style="color:${COLORS[it.c].v}">${COLORS[it.w].k}</button>`).join("")}</div>
+    <button class="go" id="fin">全部言えた</button></div>`;
+  back.onclick=home;
+  const t0=startClock();
+  const end=()=>{stopTimer();result("list",performance.now()-t0,0)};
+  app.querySelectorAll(".cell").forEach(c=>c.onclick=()=>{
+    if(c.classList.contains("done")){c.classList.remove("done");left++;return}
+    c.classList.add("done");if(--left===0)end();});
+  fin.onclick=end;
+}
+
+function playOne(){
+  const items=makeItems(QN),p=pal();let i=0,miss=0,lock=false;
+  const order=p.map((_,k)=>k);
+  app.innerHTML=`<div class="screen">${bar(`<span id="no">1</span> / ${QN}`)}
+    <div class="progress"><div id="pg"></div></div>
+    <div class="stage" id="st"><div class="word" id="wd"></div></div>
+    <div class="answers" style="grid-template-columns:repeat(${level===6?3:4},1fr)">${order.map(k=>
+      `<button class="ans" data-k="${k}"><i style="background:${p[k].v}"></i>${p[k].k}</button>`).join("")}</div></div>`;
+  back.onclick=home;
+  const show=()=>{const it=items[i];wd.textContent=p[it.w].k;wd.style.color=p[it.c].v;no.textContent=i+1;pg.style.width=(i/QN*100)+"%"};
+  show();const t0=startClock();
+  app.querySelectorAll(".ans").forEach(b=>b.onclick=()=>{
+    if(lock)return;const ok=+b.dataset.k===items[i].c;
+    st.className="stage "+(ok?"ok":"ng");if(!ok)miss++;
+    lock=true;
+    setTimeout(()=>{st.className="stage";lock=false;i++;
+      if(i>=QN){stopTimer();result("one",performance.now()-t0,miss)}else show()},ok?160:450);
+  });
+}
+
+/* ---------- voice mode ---------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const VARIANTS={
+  "赤":["赤","あか","アカ","垢","朱","明か"],
+  "青":["青","あお","アオ","蒼","碧"],
+  "黄":["黄","きいろ","キイロ","キーロ","きーろ"],
+  "緑":["緑","みどり","ミドリ","翠"],
+  "紫":["紫","むらさき","ムラサキ"],
+  "白":["白","しろ","シロ","城"]};
+let rec=null,voiceActive=false;
+function stopVoice(){voiceActive=false;try{rec&&rec.abort()}catch(e){}rec=null}
+function findColor(text,p){
+  let best=null;
+  p.forEach((c,k)=>VARIANTS[c.k].forEach(v=>{
+    const at=text.indexOf(v);
+    if(at>=0&&(!best||at<best.at))best={k,at,end:at+v.length};
+  }));
+  return best;
+}
+function startVoice(){
+  // マイク許可はタップ直後でないと出ないので、ここで認識を開始してからカウントダウン
+  stopVoice();
+  rec=new SR();rec.lang="ja-JP";rec.continuous=true;rec.interimResults=true;rec.maxAlternatives=3;
+  voiceActive=true;
+  let handler=()=>{},status=()=>{};
+  const used={};
+  rec.onresult=e=>{
+    for(let r=e.resultIndex;r<e.results.length;r++){
+      const res=e.results[r];
+      let text=res[0].transcript.replace(/\s/g,"");
+      const from=used[r]||0;
+      if(text.length<from){used[r]=0}
+      const fresh=text.slice(used[r]||0);
+      status(fresh);
+      if(fresh)handler(fresh,end=>{used[r]=(used[r]||0)+end});
+    }
+  };
+  rec.onstart=()=>status(null,true);
+  rec.onend=()=>{if(voiceActive){try{rec.start()}catch(e){}}else status(null,false)};
+  rec.onerror=e=>{
+    if(e.error==="no-speech"||e.error==="aborted")return;
+    voiceActive=false;stopTimer();release();
+    const why={"not-allowed":"マイクの使用が許可されていません。iPadの「設定」→「Safari」→「マイク」を「許可」にしてから、もう一度試してください。",
+      "service-not-allowed":"音声認識が許可されていないか、この状態では使えません。iPadの「設定」→「一般」→「キーボード」→「音声入力」がオンになっているか確認してください。",
+      "network":"音声認識にネット接続が必要と判断されました。このiPadではオフラインの音声認識が使えないようです。",
+      "audio-capture":"マイクが見つかりません。"}[e.error]||`音声認識でエラーが起きました（${e.error}）。`;
+    app.innerHTML=`<div class="screen"><div class="result"><div class="err">${why}</div>
+      <div class="row"><button class="go" id="retry">もう一回試す</button><button class="alt" id="btnTop">メニューへ</button></div></div></div>`;
+    retry.onclick=startVoice;btnTop.onclick=home;
+  };
+  try{rec.start()}catch(e){}
+  countdown(()=>playVoice(h=>handler=h,s=>status=s));
+}
+function playVoice(setHandler,setStatus){
+  const items=makeItems(QN),p=pal();let i=0,miss=0,lock=false,skipT=null;
+  app.innerHTML=`<div class="screen">${bar(`<span id="no">1</span> / ${QN}`)}
+    <div class="progress"><div id="pg"></div></div>
+    <div class="stage" id="st"><div class="word" id="wd"></div></div>
+    <div class="heard" id="hd">色を声に出してください</div>
+    <div class="mic on" id="mc"><i></i><span id="mt">聞いています</span></div>
+    <button class="skip" id="sk" hidden>聞き取れないのでとばす</button></div>`;
+  back.onclick=()=>{stopVoice();home()};
+  const show=()=>{const it=items[i];wd.textContent=p[it.w].k;wd.style.color=p[it.c].v;no.textContent=i+1;pg.style.width=(i/QN*100)+"%";
+    sk.hidden=true;clearTimeout(skipT);skipT=setTimeout(()=>{if(document.getElementById("sk"))sk.hidden=false},5000)};
+  const judge=k=>{
+    if(lock)return;lock=true;const ok=k===items[i].c;if(!ok)miss++;
+    st.className="stage "+(ok?"ok":"ng");
+    setTimeout(()=>{st.className="stage";lock=false;i++;
+      if(i>=QN){clearTimeout(skipT);stopVoice();stopTimer();result("voice",performance.now()-t0,miss)}else show()},ok?160:450);
+  };
+  sk.onclick=()=>judge(-1);
+  setStatus((fresh,on)=>{
+    const h=document.getElementById("hd"),m=document.getElementById("mc");
+    if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"マイク待機中"}
+    if(fresh&&h)h.innerHTML=`聞こえた言葉：<b>${fresh.slice(-12).replace(/[<>&]/g,"")}</b>`;
+  });
+  setHandler((fresh,consume)=>{
+    if(lock)return;const f=findColor(fresh,p);
+    if(f){consume(f.end);judge(f.k)}
+  });
+  show();const t0=startClock();
+}
+
+function result(mode,ms,miss){
+  release();
+  const isBest=record(mode,ms,miss);
+  const msg=miss===0?(isBest?"自己ベスト更新！":"ノーミス、おみごと"):`まちがい ${miss}問`;
+  app.innerHTML=`<div class="screen"><div class="result">
+    ${isBest?`<div class="badge">自己ベスト</div>`:""}
+    <div class="sub">${{list:"一覧で読み上げ",one:"1問ずつボタンで",voice:"声で答える"}[mode]}・${level}色・${QN}問</div>
+    <div class="big">${fmt(ms)}</div>
+    <div class="sub">${msg}</div>
+    <div class="row"><button class="go" id="again">もう一回</button><button class="alt" id="btnTop">メニューへ</button></div>
+  </div></div>`;
+  again.onclick=()=>mode==="voice"?startVoice():countdown(mode==="list"?playList:playOne);
+  btnTop.onclick=home;
+}
+
+home();
+if("serviceWorker" in navigator && location.protocol==="https:"){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
+</script>
+
+</body>
+</html>
