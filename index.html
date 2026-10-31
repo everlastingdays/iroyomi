@@ -94,6 +94,8 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 @keyframes pulse{50%{opacity:.3}}
 .skip{background:var(--panel);border-radius:14px;padding:14px 24px;font-size:18px;align-self:center}
 .mode[disabled]{opacity:.45}
+.hint{margin:0;text-align:center;color:var(--muted);font-size:15px}
+.misslog{color:var(--muted);font-size:16px;max-width:40em;line-height:1.7}
 .err{background:var(--panel);border:2px solid var(--c-red);border-radius:14px;padding:14px 18px;line-height:1.7;font-size:17px}
 /* result */
 .result{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center}
@@ -271,26 +273,30 @@ function playOne(){
 
 /* ---------- voice mode ---------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+// 聞き間違えやすい言葉も含めて、その色とみなす言葉の一覧（カタカナはひらがなに直してから照合）
 const VARIANTS={
-  "赤":["赤","あか","アカ","垢","朱","明か"],
-  "青":["青","あお","アオ","蒼","碧"],
-  "黄":["黄","きいろ","キイロ","キーロ","きーろ"],
-  "緑":["緑","みどり","ミドリ","翠"],
-  "紫":["紫","むらさき","ムラサキ"],
-  "白":["白","しろ","シロ","城"]};
+  "赤":["赤","あか","朱","垢","明か","阿賀","あが","赤色","あかいろ"],
+  "青":["青","あお","蒼","碧","葵","青色","あおいろ","あーお","あおう","はお","あほ"],
+  "黄":["黄","きいろ","きーろ","黄色","き色","期以後","木色","気色","きいろう","きろ"],
+  "緑":["緑","みどり","翠","見取り","みどりいろ","緑色","見とり","みろり","みどれ"],
+  "紫":["紫","むらさき","村崎","村先","紫色","むらさきいろ","むらさ"],
+  "白":["白","しろ","城","代","四郎","白色","しろいろ","しろう","シロ"]};
+const toHira=t=>t.replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)).replace(/[\s。、．，,.！？!?]/g,"");
 let rec=null,voiceActive=false;
 function stopVoice(){voiceActive=false;try{rec&&rec.abort()}catch(e){}rec=null}
 function findColor(text,p){
   let best=null;
   p.forEach((c,k)=>VARIANTS[c.k].forEach(v=>{
-    const at=text.indexOf(v);
+    const at=text.indexOf(toHira(v));
     if(at>=0&&(!best||at<best.at))best={k,at,end:at+v.length};
   }));
   return best;
 }
 /* 声モード：iPadは「音を鳴らす」と「マイクで聞く」を同時にやると聞き取りが止まることがあるので、
    効果音を鳴らす間はマイクを止め、鳴り終わってからマイクを入れ直す */
-let onHeard=()=>{},onStatus=()=>{};
+let onHeard=()=>false,onStatus=()=>{},onTry=null,startedCb=null;
+let unheard=[];
+function missHeard(t){t=t.trim();if(t&&!unheard.includes(t)){unheard.push(t);if(unheard.length>12)unheard.shift()}}
 function listen(){
   stopVoice();
   const r=new SR();rec=r;r.lang="ja-JP";r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
@@ -299,14 +305,18 @@ function listen(){
   r.onresult=e=>{
     if(rec!==r)return;
     for(let i=e.resultIndex;i<e.results.length;i++){
-      const text=e.results[i][0].transcript.replace(/\s/g,"");
+      const res=e.results[i];
+      // 候補が複数返ってきた場合、色が見つかる候補を優先する
+      let text=toHira(res[0].transcript);
+      for(let a=1;a<res.length;a++){const t=toHira(res[a].transcript);if(onTry&&onTry(t.slice(used[i]||0))){text=t;break}}
       if(text.length<(used[i]||0))used[i]=0;
       const fresh=text.slice(used[i]||0);
-      onStatus(fresh);
-      if(fresh)onHeard(fresh,end=>{used[i]=(used[i]||0)+end});
+      onStatus(res[0].transcript.slice(-12));
+      if(fresh){const hit=onHeard(fresh,end=>{used[i]=(used[i]||0)+end});
+        if(!hit&&res.isFinal)missHeard(res[0].transcript)}
     }
   };
-  r.onstart=()=>{if(rec===r)onStatus(null,true)};
+  r.onstart=()=>{if(rec!==r)return;onStatus(null,true);if(startedCb){const f=startedCb;startedCb=null;f()}};
   r.onend=()=>{if(rec!==r)return;if(voiceActive){try{r.start()}catch(e){}}else onStatus(null,false)};
   r.onerror=e=>{
     if(rec!==r)return;
@@ -322,11 +332,15 @@ function listen(){
   };
   try{r.start()}catch(e){}
 }
+// マイクが本当に聞き始めるまで待つ（最大1.5秒）
+function listenReady(){return new Promise(res=>{let done=false;const f=()=>{if(!done){done=true;setTimeout(res,200)}};
+  startedCb=f;listen();setTimeout(f,1500)})}
 function startVoice(){
+  unheard=[];
   // タップした瞬間に音とマイクの両方の許可を取っておく
   snd.unlock();
   listen();
-  onHeard=()=>{};onStatus=()=>{};
+  onHeard=()=>false;onStatus=()=>{};onTry=null;
   keepAwake();
   // 声モードのカウントダウンは音なし（マイクを止めないため）
   snd.sleep();
@@ -339,6 +353,7 @@ function playVoice(){
     <div class="progress"><div id="pg"></div></div>
     <div class="stage" id="st"><div class="word" id="wd"></div></div>
     <div class="heard" id="hd">色を声に出してください</div>
+    <p class="hint">聞き取りにくいときは「あかいろ」「あおいろ」のように「いろ」を付けて言うと伝わりやすくなります</p>
     <div class="mic on" id="mc"><i></i><span id="mt">聞いています</span></div>
     <button class="skip" id="sk" hidden>聞き取れないのでとばす</button></div>`;
   back.onclick=()=>{stopVoice();home()};
@@ -356,7 +371,8 @@ function playVoice(){
         clear();i++;hd.textContent="";
         if(i>=QN){stopVoice();stopTimer();result("voice",clk.t(),miss);return}
         const next=()=>{lock=false;show();clk.resume()};
-        if(withSound){snd.sleep().then(()=>{listen();next()},()=>{listen();next()})}else next();
+        // マイクが聞き始めてから次の文字を出す（早口で言って聞き逃すのを防ぐ）
+        if(withSound){const n2=()=>listenReady().then(next);snd.sleep().then(n2,n2)}else next();
       },wait);
     };
     if(withSound)snd.wake().then(go,go);else go();
@@ -365,13 +381,15 @@ function playVoice(){
   onStatus=(fresh,on)=>{
     const h=document.getElementById("hd"),m=document.getElementById("mc");
     if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
-    if(fresh&&h)h.innerHTML=`聞こえた言葉 <b>${fresh.slice(-12).replace(/[<>&]/g,"")}</b>`;
+    if(fresh&&h)h.innerHTML=`聞こえた言葉 <b>${fresh.replace(/[<>&]/g,"")}</b>`;
   };
   onHeard=(fresh,consume)=>{
     if(lock){consume(fresh.length);return} // 判定表示中に言った言葉は捨てる
     const f=findColor(fresh,p);
-    if(f){consume(f.end);judge(f.k)}
+    if(f){consume(f.end);judge(f.k);return true}
+    return false;
   };
+  onTry=t=>!!findColor(t,p);
   show();clk=startClock();
 }
 
@@ -385,6 +403,7 @@ function result(mode,ms,miss){
     <div class="sub">${{list:"一覧で読み上げ",one:"1問ずつボタンで",voice:"声で答える"}[mode]}・${level}色・${QN}問</div>
     <div class="big">${fmt(ms)}</div>
     <div class="sub">${msg}</div>
+    ${mode==="voice"&&unheard.length?`<div class="misslog">色として聞き取れなかった言葉：${unheard.map(t=>`「${t.replace(/[<>&]/g,"")}」`).join(" ")}</div>`:""}
     <div class="row"><button class="go" id="again">もう一回</button><button class="alt" id="btnTop">メニューへ</button></div>
   </div></div>`;
   again.onclick=()=>{snd.unlock();mode==="voice"?startVoice():countdown(mode==="list"?playList:playOne)};
