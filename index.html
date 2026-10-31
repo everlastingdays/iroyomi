@@ -128,8 +128,10 @@ let tick=null,wake=null;
 /* ---------- 効果音（その場で合成するのでオフラインでも鳴る） ---------- */
 let soundOn=store.get("iroyomi.sound",true);
 const snd={ctx:null,
-  unlock(){try{if(!this.ctx){const A=window.AudioContext||window.webkitAudioContext;if(A)this.ctx=new A()}
+  unlock(){if(!soundOn)return;try{if(!this.ctx){const A=window.AudioContext||window.webkitAudioContext;if(A)this.ctx=new A()}
     if(this.ctx&&this.ctx.state!=="running")this.ctx.resume()}catch(e){}},
+  sleep(){try{if(this.ctx&&this.ctx.state==="running")return this.ctx.suspend()}catch(e){}return Promise.resolve()},
+  wake(){try{if(this.ctx&&this.ctx.state!=="running")return this.ctx.resume()}catch(e){}return Promise.resolve()},
   tone(f,start,dur,{type="sine",vol=.35,decay=true,to=null}={}){
     const c=this.ctx;if(!c||!soundOn)return;const t=c.currentTime+start;
     const o=c.createOscillator(),g=c.createGain();o.type=type;o.frequency.setValueAtTime(f,t);
@@ -286,42 +288,53 @@ function findColor(text,p){
   }));
   return best;
 }
-function startVoice(){
-  // マイク許可はタップ直後でないと出ないので、ここで認識を開始してからカウントダウン
-  stopVoice();snd.unlock();
-  rec=new SR();rec.lang="ja-JP";rec.continuous=true;rec.interimResults=true;rec.maxAlternatives=3;
+/* 声モード：iPadは「音を鳴らす」と「マイクで聞く」を同時にやると聞き取りが止まることがあるので、
+   効果音を鳴らす間はマイクを止め、鳴り終わってからマイクを入れ直す */
+let onHeard=()=>{},onStatus=()=>{};
+function listen(){
+  stopVoice();
+  const r=new SR();rec=r;r.lang="ja-JP";r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
   voiceActive=true;
-  let handler=()=>{},status=()=>{};
   const used={};
-  rec.onresult=e=>{
-    for(let r=e.resultIndex;r<e.results.length;r++){
-      const res=e.results[r];
-      let text=res[0].transcript.replace(/\s/g,"");
-      const from=used[r]||0;
-      if(text.length<from){used[r]=0}
-      const fresh=text.slice(used[r]||0);
-      status(fresh);
-      if(fresh)handler(fresh,end=>{used[r]=(used[r]||0)+end});
+  r.onresult=e=>{
+    if(rec!==r)return;
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const text=e.results[i][0].transcript.replace(/\s/g,"");
+      if(text.length<(used[i]||0))used[i]=0;
+      const fresh=text.slice(used[i]||0);
+      onStatus(fresh);
+      if(fresh)onHeard(fresh,end=>{used[i]=(used[i]||0)+end});
     }
   };
-  rec.onstart=()=>status(null,true);
-  rec.onend=()=>{if(voiceActive){try{rec.start()}catch(e){}}else status(null,false)};
-  rec.onerror=e=>{
+  r.onstart=()=>{if(rec===r)onStatus(null,true)};
+  r.onend=()=>{if(rec!==r)return;if(voiceActive){try{r.start()}catch(e){}}else onStatus(null,false)};
+  r.onerror=e=>{
+    if(rec!==r)return;
     if(e.error==="no-speech"||e.error==="aborted")return;
-    voiceActive=false;stopTimer();release();
+    voiceActive=false;rec=null;stopTimer();release();
     const why={"not-allowed":"マイクの使用が許可されていません。iPadの「設定」→「Safari」→「マイク」を「許可」にしてから、もう一度試してください。",
       "service-not-allowed":"音声認識が許可されていないか、この状態では使えません。iPadの「設定」→「一般」→「キーボード」→「音声入力」がオンになっているか確認してください。",
       "network":"音声認識にネット接続が必要と判断されました。このiPadではオフラインの音声認識が使えないようです。",
-      "audio-capture":"マイクが見つかりません。"}[e.error]||`音声認識でエラーが起きました（${e.error}）。`;
+      "audio-capture":"マイクがうまく使えませんでした。メニューで効果音を「なし」にして試すと動く場合があります。"}[e.error]||`音声認識でエラーが起きました（${e.error}）。`;
     app.innerHTML=`<div class="screen"><div class="result"><div class="err">${why}</div>
       <div class="row"><button class="go" id="retry">もう一回試す</button><button class="alt" id="btnTop">メニューへ</button></div></div></div>`;
     retry.onclick=startVoice;btnTop.onclick=home;
   };
-  try{rec.start()}catch(e){}
-  countdown(()=>playVoice(h=>handler=h,s=>status=s));
+  try{r.start()}catch(e){}
 }
-function playVoice(setHandler,setStatus){
-  const items=makeItems(QN),p=pal();let i=0,miss=0,lock=false,skipT=null;
+function startVoice(){
+  // タップした瞬間に音とマイクの両方の許可を取っておく
+  snd.unlock();
+  listen();
+  onHeard=()=>{};onStatus=()=>{};
+  keepAwake();
+  // 声モードのカウントダウンは音なし（マイクを止めないため）
+  snd.sleep();
+  const el=document.getElementById("count");let n=3;el.hidden=false;el.textContent=n;
+  const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;playVoice()}else el.textContent=n},700);
+}
+function playVoice(){
+  const items=makeItems(QN),p=pal();let i=0,miss=0,lock=false,skipT=null,clk=null;
   app.innerHTML=`<div class="screen">${bar(`<span id="no">1</span> / ${QN}`)}
     <div class="progress"><div id="pg"></div></div>
     <div class="stage" id="st"><div class="word" id="wd"></div></div>
@@ -333,28 +346,39 @@ function playVoice(setHandler,setStatus){
     sk.hidden=true;clearTimeout(skipT);skipT=setTimeout(()=>{if(document.getElementById("sk"))sk.hidden=false},5000)};
   const judge=k=>{
     if(lock)return;lock=true;const ok=k===items[i].c;if(!ok)miss++;
-    clk.pause();clearTimeout(skipT);const clear=showJudge(st,ok,k,items[i].c,p);
-    setTimeout(()=>{clear();lock=false;i++;hd.textContent="";
-      if(i>=QN){stopVoice();stopTimer();result("voice",clk.t(),miss)}else{show();clk.resume()}},ok?OK_MS:NG_MS);
+    clk.pause();clearTimeout(skipT);
+    const withSound=soundOn&&snd.ctx;
+    if(withSound){stopVoice();onStatus(null,false)}   // 鳴らす前にマイクを止める
+    const go=()=>{
+      const clear=showJudge(st,ok,k,items[i].c,p);
+      const wait=withSound?(ok?1150:1100):(ok?OK_MS:NG_MS);
+      setTimeout(()=>{
+        clear();i++;hd.textContent="";
+        if(i>=QN){stopVoice();stopTimer();result("voice",clk.t(),miss);return}
+        const next=()=>{lock=false;show();clk.resume()};
+        if(withSound){snd.sleep().then(()=>{listen();next()},()=>{listen();next()})}else next();
+      },wait);
+    };
+    if(withSound)snd.wake().then(go,go);else go();
   };
   sk.onclick=()=>judge(-1);
-  setStatus((fresh,on)=>{
+  onStatus=(fresh,on)=>{
     const h=document.getElementById("hd"),m=document.getElementById("mc");
-    if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"マイク待機中"}
+    if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
     if(fresh&&h)h.innerHTML=`聞こえた言葉 <b>${fresh.slice(-12).replace(/[<>&]/g,"")}</b>`;
-  });
-  setHandler((fresh,consume)=>{
+  };
+  onHeard=(fresh,consume)=>{
     if(lock){consume(fresh.length);return} // 判定表示中に言った言葉は捨てる
     const f=findColor(fresh,p);
     if(f){consume(f.end);judge(f.k)}
-  });
-  show();const clk=startClock();
+  };
+  show();clk=startClock();
 }
 
 function result(mode,ms,miss){
   release();
   const isBest=record(mode,ms,miss);
-  if(miss===0)setTimeout(()=>snd.fanfare(),150);
+  if(miss===0)snd.wake().then(()=>setTimeout(()=>snd.fanfare(),150),()=>{});
   const msg=miss===0?(isBest?"自己ベスト更新！":"ノーミス、おみごと"):`まちがい ${miss}問`;
   app.innerHTML=`<div class="screen"><div class="result">
     ${isBest?`<div class="badge">自己ベスト</div>`:""}
