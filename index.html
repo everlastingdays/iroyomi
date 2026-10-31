@@ -19,7 +19,7 @@
   color-scheme: dark;
   --bg:#26303a; --panel:#313c48; --line:#435060; --fg:#f2efe6; --muted:#a9b3bd; --accent:#f2efe6;
   --c-red:#ff5f52; --c-blue:#5b9bff; --c-yellow:#ffd43b; --c-green:#3fd27a; --c-purple:#c27bff; --c-white:#f7f7f2;
-  --ok:#3fd27a; --ng:#ff5f52;
+  --ok:#3fd27a; --ng:#ff5f52; --maru:#ff4a4a; --batsu:#4f8bff;
   --f-word:"Hiragino Maru Gothic ProN","Hiragino Maru Gothic Pro","Hiragino Sans","Noto Sans JP",sans-serif;
   --f-ui:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
 }
@@ -69,9 +69,14 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 /* one-by-one mode */
 .stage{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative}
 .word{font-family:var(--f-word);font-weight:800;font-size:clamp(110px,24vw,240px);line-height:1}
-.stage.ok::after,.stage.ng::after{position:absolute;top:8%;font-size:40px;font-weight:700}
-.stage.ok::after{content:"○";color:var(--ok)} .stage.ng::after{content:"×";color:var(--ng)}
+.judge{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  background:color-mix(in srgb,var(--bg) 78%,transparent);border-radius:20px;z-index:2}
+.judge .mark{width:clamp(180px,36vh,340px);height:clamp(180px,36vh,340px);animation:pop .28s ease-out}
+.judge.ok .mark{color:var(--maru)} .judge.ng .mark{color:var(--batsu)}
+.judge .says{display:flex;gap:28px;flex-wrap:wrap;justify-content:center;align-items:baseline;font-size:24px;color:var(--muted)}
+.judge .says b{font-family:var(--f-word);font-size:clamp(48px,8vw,72px);font-weight:800;margin-left:8px}
 .stage.ng .word{animation:shake .3s}
+@keyframes pop{0%{transform:scale(.4);opacity:0}70%{transform:scale(1.1);opacity:1}100%{transform:scale(1)}}
 @keyframes shake{25%{transform:translateX(-12px)}75%{transform:translateX(12px)}}
 .answers{display:grid;gap:12px}
 .ans{background:var(--panel);border:2px solid var(--line);border-radius:16px;padding:20px 8px;
@@ -81,8 +86,8 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 .progress{height:8px;background:var(--panel);border-radius:999px;overflow:hidden}
 .progress div{height:100%;background:var(--fg);width:0;transition:width .2s}
 
-.heard{min-height:2.4em;text-align:center;color:var(--muted);font-size:20px;line-height:1.4}
-.heard b{color:var(--fg)}
+.heard{min-height:1.6em;text-align:center;color:var(--muted);font-size:26px;line-height:1.4}
+.heard b{color:var(--fg);font-size:36px;font-family:var(--f-word)}
 .mic{display:flex;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:17px}
 .mic i{width:14px;height:14px;border-radius:50%;background:var(--muted);flex:none}
 .mic.on i{background:var(--c-red);animation:pulse 1.2s infinite}
@@ -120,6 +125,45 @@ let level=store.get("iroyomi.level",4);
 const app=document.getElementById("app");
 let tick=null,wake=null;
 
+/* ---------- 効果音（その場で合成するのでオフラインでも鳴る） ---------- */
+let soundOn=store.get("iroyomi.sound",true);
+const snd={ctx:null,
+  unlock(){try{if(!this.ctx){const A=window.AudioContext||window.webkitAudioContext;if(A)this.ctx=new A()}
+    if(this.ctx&&this.ctx.state!=="running")this.ctx.resume()}catch(e){}},
+  tone(f,start,dur,{type="sine",vol=.35,decay=true,to=null}={}){
+    const c=this.ctx;if(!c||!soundOn)return;const t=c.currentTime+start;
+    const o=c.createOscillator(),g=c.createGain();o.type=type;o.frequency.setValueAtTime(f,t);
+    if(to)o.frequency.linearRampToValueAtTime(to,t+dur);
+    g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+.012);
+    if(decay)g.gain.exponentialRampToValueAtTime(0.0001,t+dur);else{g.gain.setValueAtTime(vol,t+dur-.03);g.gain.linearRampToValueAtTime(0.0001,t+dur)}
+    o.connect(g).connect(c.destination);o.start(t);o.stop(t+dur+.05)},
+  pinpon(){ // ピンポーン：高い音→少し低い音、鐘のように響く
+    this.tone(1319,0,.45,{vol:.32});this.tone(2638,0,.25,{vol:.06});
+    this.tone(1047,.22,1.1,{vol:.34});this.tone(2094,.22,.5,{vol:.06})},
+  bubuu(){ // ブッブー：低いブザー2回
+    this.tone(148,0,.16,{type:"sawtooth",vol:.22,decay:false});this.tone(152,0,.16,{type:"square",vol:.1,decay:false});
+    this.tone(148,.22,.55,{type:"sawtooth",vol:.22,decay:false});this.tone(152,.22,.55,{type:"square",vol:.1,decay:false})},
+  beep(hi){this.tone(hi?1568:784,0,hi?.35:.14,{type:"triangle",vol:.25})},
+  fanfare(){[784,988,1175,1568].forEach((f,i)=>this.tone(f,i*.11,i===3?.7:.18,{type:"triangle",vol:.25}))}
+};
+function makeClock(){
+  let acc=0,from=performance.now(),run=true;
+  const c={t:()=>acc+(run?performance.now()-from:0),
+    pause(){if(run){acc+=performance.now()-from;run=false}},
+    resume(){if(!run){from=performance.now();run=true}}};
+  tick=setInterval(()=>{const e=document.getElementById("tm");if(e)e.textContent=(c.t()/1000).toFixed(1)},100);
+  return c;
+}
+function showJudge(st,ok,said,answer,p){
+  const chip=k=>k>=0?`<b style="color:${p[k].v}">${p[k].k}</b>`:`<b>―</b>`;
+  const j=document.createElement("div");j.className="judge "+(ok?"ok":"ng");
+  j.innerHTML=`<svg class="mark" viewBox="0 0 100 100" aria-label="${ok?"正解":"不正解"}">${ok?'<circle cx="50" cy="50" r="38" fill="none" stroke="currentColor" stroke-width="13"/>':'<path d="M18 18L82 82M82 18L18 82" stroke="currentColor" stroke-width="15" stroke-linecap="round"/>'}</svg><div class="says"><span>あなたの答え${chip(said)}</span>${ok?"":`<span>正解${chip(answer)}</span>`}</div>`;
+  st.appendChild(j);st.classList.toggle("ng",!ok);
+  ok?snd.pinpon():snd.bubuu();
+  return ()=>{j.remove();st.classList.remove("ng")};
+}
+const OK_MS=750,NG_MS=1400;
+
 const fmt=ms=>(ms/1000).toFixed(1)+"秒";
 const pal=()=>COLORS.slice(0,level);
 const rnd=n=>Math.floor(Math.random()*n);
@@ -154,7 +198,9 @@ function home(){
    <div class="rule">例：<b>青</b> と赤い色で書いてあったら「あか」と声に出して答えます。文字につられないのがコツです。</div>
    <div class="lv"><span class="lab">使う色</span>
      <button class="seg" data-lv="4" aria-pressed="${level===4}">4色（やさしい）</button>
-     <button class="seg" data-lv="6" aria-pressed="${level===6}">6色（むずかしい）</button></div>
+     <button class="seg" data-lv="6" aria-pressed="${level===6}">6色（むずかしい）</button>
+     <span class="lab" style="margin-left:12px">効果音</span>
+     <button class="seg" id="sndBtn" aria-pressed="${soundOn}">${soundOn?"あり":"なし"}</button></div>
    <div class="modes">
      <button class="mode" id="mList"><h2>一覧で読み上げ</h2>
        <p>${QN}個の文字が並びます。左上から順に色を声に出し、言えたら指でタップ。全部消えたらタイム確定。</p>
@@ -169,24 +215,22 @@ function home(){
    ${logs.length?`<div class="hist">最近の記録（${level}色）　${logs.map(x=>`${x.d} ${x.n} ${fmt(x.t)}${x.m?`・ミス${x.m}`:""}`).join("　／　")}</div>`:""}
   </div>`;
   app.querySelectorAll(".seg").forEach(b=>b.onclick=()=>{level=+b.dataset.lv;store.set("iroyomi.level",level);home()});
+  sndBtn.onclick=()=>{soundOn=!soundOn;store.set("iroyomi.sound",soundOn);snd.unlock();if(soundOn)snd.pinpon();home()};
   mList.onclick=()=>countdown(playList);
   mOne.onclick=()=>countdown(playOne);
   if(SR)mVoice.onclick=startVoice;
 }
 
 function countdown(next){
-  const el=document.getElementById("count");let n=3;el.hidden=false;el.textContent=n;keepAwake();
-  const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;next()}else el.textContent=n},700);
+  snd.unlock();
+  const el=document.getElementById("count");let n=3;el.hidden=false;el.textContent=n;keepAwake();snd.beep(false);
+  const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;snd.beep(true);next()}else{el.textContent=n;snd.beep(false)}},700);
 }
 
 function bar(info){
   return `<div class="bar"><button class="back" id="back">← やめる</button><div class="info">${info}</div><div class="timer" id="tm">0.0</div></div>`;
 }
-function startClock(){
-  const t0=performance.now();
-  tick=setInterval(()=>{const e=document.getElementById("tm");if(e)e.textContent=((performance.now()-t0)/1000).toFixed(1)},100);
-  return t0;
-}
+function startClock(){return makeClock()}
 
 function playList(){
   const items=makeItems(QN);let left=QN;
@@ -196,8 +240,8 @@ function playList(){
       `<button class="cell" data-i="${i}" style="color:${COLORS[it.c].v}">${COLORS[it.w].k}</button>`).join("")}</div>
     <button class="go" id="fin">全部言えた</button></div>`;
   back.onclick=home;
-  const t0=startClock();
-  const end=()=>{stopTimer();result("list",performance.now()-t0,0)};
+  const clk=startClock();
+  const end=()=>{stopTimer();result("list",clk.t(),0)};
   app.querySelectorAll(".cell").forEach(c=>c.onclick=()=>{
     if(c.classList.contains("done")){c.classList.remove("done");left++;return}
     c.classList.add("done");if(--left===0)end();});
@@ -214,13 +258,12 @@ function playOne(){
       `<button class="ans" data-k="${k}"><i style="background:${p[k].v}"></i>${p[k].k}</button>`).join("")}</div></div>`;
   back.onclick=home;
   const show=()=>{const it=items[i];wd.textContent=p[it.w].k;wd.style.color=p[it.c].v;no.textContent=i+1;pg.style.width=(i/QN*100)+"%"};
-  show();const t0=startClock();
+  show();const clk=startClock();
   app.querySelectorAll(".ans").forEach(b=>b.onclick=()=>{
-    if(lock)return;const ok=+b.dataset.k===items[i].c;
-    st.className="stage "+(ok?"ok":"ng");if(!ok)miss++;
-    lock=true;
-    setTimeout(()=>{st.className="stage";lock=false;i++;
-      if(i>=QN){stopTimer();result("one",performance.now()-t0,miss)}else show()},ok?160:450);
+    if(lock)return;const said=+b.dataset.k,ok=said===items[i].c;if(!ok)miss++;
+    lock=true;clk.pause();const clear=showJudge(st,ok,said,items[i].c,p);
+    setTimeout(()=>{clear();lock=false;i++;
+      if(i>=QN){stopTimer();result("one",clk.t(),miss)}else{show();clk.resume()}},ok?OK_MS:NG_MS);
   });
 }
 
@@ -245,7 +288,7 @@ function findColor(text,p){
 }
 function startVoice(){
   // マイク許可はタップ直後でないと出ないので、ここで認識を開始してからカウントダウン
-  stopVoice();
+  stopVoice();snd.unlock();
   rec=new SR();rec.lang="ja-JP";rec.continuous=true;rec.interimResults=true;rec.maxAlternatives=3;
   voiceActive=true;
   let handler=()=>{},status=()=>{};
@@ -290,26 +333,28 @@ function playVoice(setHandler,setStatus){
     sk.hidden=true;clearTimeout(skipT);skipT=setTimeout(()=>{if(document.getElementById("sk"))sk.hidden=false},5000)};
   const judge=k=>{
     if(lock)return;lock=true;const ok=k===items[i].c;if(!ok)miss++;
-    st.className="stage "+(ok?"ok":"ng");
-    setTimeout(()=>{st.className="stage";lock=false;i++;
-      if(i>=QN){clearTimeout(skipT);stopVoice();stopTimer();result("voice",performance.now()-t0,miss)}else show()},ok?160:450);
+    clk.pause();clearTimeout(skipT);const clear=showJudge(st,ok,k,items[i].c,p);
+    setTimeout(()=>{clear();lock=false;i++;hd.textContent="";
+      if(i>=QN){stopVoice();stopTimer();result("voice",clk.t(),miss)}else{show();clk.resume()}},ok?OK_MS:NG_MS);
   };
   sk.onclick=()=>judge(-1);
   setStatus((fresh,on)=>{
     const h=document.getElementById("hd"),m=document.getElementById("mc");
     if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"マイク待機中"}
-    if(fresh&&h)h.innerHTML=`聞こえた言葉：<b>${fresh.slice(-12).replace(/[<>&]/g,"")}</b>`;
+    if(fresh&&h)h.innerHTML=`聞こえた言葉 <b>${fresh.slice(-12).replace(/[<>&]/g,"")}</b>`;
   });
   setHandler((fresh,consume)=>{
-    if(lock)return;const f=findColor(fresh,p);
+    if(lock){consume(fresh.length);return} // 判定表示中に言った言葉は捨てる
+    const f=findColor(fresh,p);
     if(f){consume(f.end);judge(f.k)}
   });
-  show();const t0=startClock();
+  show();const clk=startClock();
 }
 
 function result(mode,ms,miss){
   release();
   const isBest=record(mode,ms,miss);
+  if(miss===0)setTimeout(()=>snd.fanfare(),150);
   const msg=miss===0?(isBest?"自己ベスト更新！":"ノーミス、おみごと"):`まちがい ${miss}問`;
   app.innerHTML=`<div class="screen"><div class="result">
     ${isBest?`<div class="badge">自己ベスト</div>`:""}
@@ -318,7 +363,7 @@ function result(mode,ms,miss){
     <div class="sub">${msg}</div>
     <div class="row"><button class="go" id="again">もう一回</button><button class="alt" id="btnTop">メニューへ</button></div>
   </div></div>`;
-  again.onclick=()=>mode==="voice"?startVoice():countdown(mode==="list"?playList:playOne);
+  again.onclick=()=>{snd.unlock();mode==="voice"?startVoice():countdown(mode==="list"?playList:playOne)};
   btnTop.onclick=home;
 }
 
