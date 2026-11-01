@@ -23,6 +23,9 @@
   --f-word:"Hiragino Maru Gothic ProN","Hiragino Maru Gothic Pro","Hiragino Sans","Noto Sans JP",sans-serif;
   --f-ui:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
 }
+/* 見分けやすい配色：色弱の見え方で計算し、青・緑・紫の差を大きくした色（背景も少し暗くしてくっきり見せる） */
+:root[data-cv="clear"]{--bg:#1b2026;--panel:#272e36;--line:#3b4550;
+  --c-red:#ff5a1f; --c-blue:#2f5bff; --c-yellow:#ffe600; --c-green:#119a5a; --c-purple:#ff4fd8; --c-white:#ffffff}
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);font-size:18px;
   -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;overflow:hidden}
@@ -97,6 +100,11 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 .hint{margin:0;text-align:center;color:var(--muted);font-size:15px}
 .misslog{color:var(--muted);font-size:16px;max-width:40em;line-height:1.7}
 .ver{color:var(--muted);font-size:13px;order:99;margin-top:auto}
+.chip{display:inline-flex;align-items:center;gap:8px;background:var(--panel);border:2px solid var(--line);border-radius:999px;padding:8px 16px;
+  font-family:var(--f-word);font-size:22px;font-weight:800}
+.chip[aria-pressed="false"]{opacity:.35;text-decoration:line-through}
+.chip[aria-pressed="true"]{border-color:var(--fg)}
+.lv .note{color:var(--muted);font-size:14px}
 .err{background:var(--panel);border:2px solid var(--c-red);border-radius:14px;padding:14px 18px;line-height:1.7;font-size:17px}
 /* result */
 .result{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center}
@@ -122,10 +130,16 @@ const COLORS=[
   {k:"赤",v:"var(--c-red)"},{k:"青",v:"var(--c-blue)"},{k:"黄",v:"var(--c-yellow)"},
   {k:"緑",v:"var(--c-green)"},{k:"紫",v:"var(--c-purple)"},{k:"白",v:"var(--c-white)"}];
 const QN=20;
-const APP_VER="8";
+const APP_VER="9";
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
-let level=store.get("iroyomi.level",4);
+// 使う色（COLORSの番号）。最低3色
+let colorSet=store.get("iroyomi.colors",null);
+if(!Array.isArray(colorSet)||colorSet.length<3){const lv=store.get("iroyomi.level",4);colorSet=lv===6?[0,1,2,3,4,5]:[0,1,2,3]}
+let level=colorSet.length;
+let cvMode=store.get("iroyomi.cv","std");   // "std"=標準の色 / "clear"=見分けやすい色
+function applyCv(){try{document.documentElement.dataset.cv=cvMode}catch(e){}}
+applyCv();
 const app=document.getElementById("app");
 let tick=null,wake=null;
 
@@ -171,7 +185,7 @@ function showJudge(st,ok,said,answer,p){
 const OK_MS=750,NG_MS=1400;
 
 const fmt=ms=>(ms/1000).toFixed(1)+"秒";
-const pal=()=>COLORS.slice(0,level);
+const pal=()=>colorSet.map(i=>COLORS[i]);
 const rnd=n=>Math.floor(Math.random()*n);
 function makeItems(n){
   const p=pal(),out=[];
@@ -185,7 +199,7 @@ function makeItems(n){
 async function keepAwake(){try{wake=await navigator.wakeLock?.request("screen")}catch(e){}}
 function release(){try{wake?.release()}catch(e){}wake=null}
 function stopTimer(){clearInterval(tick);tick=null}
-function key(mode){return `iroyomi.${mode}.${level}`}
+function key(mode){return colorSet.join("")==="0123"?`iroyomi.${mode}.4`:colorSet.join("")==="012345"?`iroyomi.${mode}.6`:`iroyomi.${mode}.c${colorSet.join("")}`}
 function record(mode,ms,miss){
   const r=store.get(key(mode),{best:null,log:[]});
   const isBest=miss===0&&(r.best===null||ms<r.best);
@@ -203,8 +217,11 @@ function home(){
    <div class="brand"><h1><span>い</span><span>ろ</span><span>よ</span><span>み</span></h1><p>文字ではなく「色」を答える脳トレ</p></div>
    <div class="rule">例：<b>青</b> と赤い色で書いてあったら「あか」と声に出して答えます。文字につられないのがコツです。</div>
    <div class="lv"><span class="lab">使う色</span>
-     <button class="seg" data-lv="4" aria-pressed="${level===4}">4色（やさしい）</button>
-     <button class="seg" data-lv="6" aria-pressed="${level===6}">6色（むずかしい）</button>
+     ${COLORS.map((c,i)=>`<button class="chip" data-ci="${i}" aria-pressed="${colorSet.includes(i)}" style="color:${c.v}">${c.k}</button>`).join("")}
+     <span class="note">タップで選ぶ（3色以上）</span></div>
+   <div class="lv"><span class="lab">色の見え方</span>
+     <button class="seg" data-cv="std" aria-pressed="${cvMode==="std"}">標準</button>
+     <button class="seg" data-cv="clear" aria-pressed="${cvMode==="clear"}">見分けやすい色</button>
      <span class="lab" style="margin-left:12px">効果音</span>
      <button class="seg" id="sndBtn" aria-pressed="${soundOn}">${soundOn?"あり":"なし"}</button></div>
    ${SR?`<div class="lv"><span class="lab">声で答える言葉</span>
@@ -223,9 +240,12 @@ function home(){
        <div class="best">ベスト ${V.best?fmt(V.best):"―"}（ノーミス）</div></button>
    </div>
    <div class="ver">いろよみ 版 ${APP_VER}</div>
-   ${logs.length?`<div class="hist">最近の記録（${level}色）　${logs.map(x=>`${x.d} ${x.n} ${fmt(x.t)}${x.m?`・ミス${x.m}`:""}`).join("　／　")}</div>`:""}
+   ${logs.length?`<div class="hist">最近の記録（${pal().map(c=>c.k).join("")}）　${logs.map(x=>`${x.d} ${x.n} ${fmt(x.t)}${x.m?`・ミス${x.m}`:""}`).join("　／　")}</div>`:""}
   </div>`;
-  app.querySelectorAll(".seg[data-lv]").forEach(b=>b.onclick=()=>{level=+b.dataset.lv;store.set("iroyomi.level",level);home()});
+  app.querySelectorAll(".chip[data-ci]").forEach(b=>b.onclick=()=>{const i=+b.dataset.ci;
+    if(colorSet.includes(i)){if(colorSet.length<=3)return;colorSet=colorSet.filter(x=>x!==i)}else colorSet=[...colorSet,i].sort();
+    level=colorSet.length;store.set("iroyomi.colors",colorSet);home()});
+  app.querySelectorAll(".seg[data-cv]").forEach(b=>b.onclick=()=>{cvMode=b.dataset.cv;store.set("iroyomi.cv",cvMode);applyCv();home()});
   app.querySelectorAll(".seg[data-vl]").forEach(b=>b.onclick=()=>{voiceLang=b.dataset.vl;store.set("iroyomi.voiceLang",voiceLang);home()});
   if(SR)micTest.onclick=startTest;
   sndBtn.onclick=()=>{soundOn=!soundOn;store.set("iroyomi.sound",soundOn);snd.unlock();if(soundOn)snd.pinpon();home()};
@@ -246,11 +266,11 @@ function bar(info){
 function startClock(){return makeClock()}
 
 function playList(){
-  const items=makeItems(QN);let left=QN;
+  const items=makeItems(QN),p=pal();let left=QN;
   const cols=window.innerWidth<600?4:5;
   app.innerHTML=`<div class="screen">${bar("色を声に出して、言えたらタップ")}
     <div class="grid" style="grid-template-columns:repeat(${cols},1fr)">${items.map((it,i)=>
-      `<button class="cell" data-i="${i}" style="color:${COLORS[it.c].v}">${COLORS[it.w].k}</button>`).join("")}</div>
+      `<button class="cell" data-i="${i}" style="color:${p[it.c].v}">${p[it.w].k}</button>`).join("")}</div>
     <button class="go" id="fin">全部言えた</button></div>`;
   back.onclick=home;
   const clk=startClock();
@@ -267,7 +287,7 @@ function playOne(){
   app.innerHTML=`<div class="screen">${bar(`<span id="no">1</span> / ${QN}`)}
     <div class="progress"><div id="pg"></div></div>
     <div class="stage" id="st"><div class="word" id="wd"></div></div>
-    <div class="answers" style="grid-template-columns:repeat(${level===6?3:4},1fr)">${order.map(k=>
+    <div class="answers" style="grid-template-columns:repeat(${level<=4?level:3},1fr)">${order.map(k=>
       `<button class="ans" data-k="${k}"><i style="background:${p[k].v}"></i>${p[k].k}</button>`).join("")}</div></div>`;
   back.onclick=home;
   const show=()=>{const it=items[i];wd.textContent=p[it.w].k;wd.style.color=p[it.c].v;no.textContent=i+1;pg.style.width=(i/QN*100)+"%"};
@@ -399,7 +419,7 @@ function playVoice(){
     <div class="progress"><div id="pg"></div></div>
     <div class="stage" id="st"><div class="word" id="wd"></div></div>
     <div class="heard" id="hd">色を声に出してください</div>
-    <p class="hint">${voiceLang==="en"?"red・blue・yellow・green"+(level===6?"・purple・white":"")+" で答えます":"聞き取りにくいときは「あかいろ」「あおいろ」のように「いろ」を付けて言うと伝わりやすくなります"}</p>
+    <p class="hint">${voiceLang==="en"?pal().map(c=>EN_NAME[c.k]).join("・")+" で答えます":"聞き取りにくいときは「あかいろ」「あおいろ」のように「いろ」を付けて言うと伝わりやすくなります"}</p>
     <div class="mic on" id="mc"><i></i><span id="mt">聞いています</span></div>
     <button class="skip" id="sk" hidden>聞き取れないのでとばす</button></div>`;
   back.onclick=()=>{stopVoice();home()};
@@ -446,7 +466,7 @@ function result(mode,ms,miss){
   const msg=miss===0?(isBest?"自己ベスト更新！":"ノーミス、おみごと"):`まちがい ${miss}問`;
   app.innerHTML=`<div class="screen"><div class="result">
     ${isBest?`<div class="badge">自己ベスト</div>`:""}
-    <div class="sub">${{list:"一覧で読み上げ",one:"1問ずつボタンで",voice:"声で答える"}[mode]}・${level}色・${QN}問</div>
+    <div class="sub">${{list:"一覧で読み上げ",one:"1問ずつボタンで",voice:"声で答える"}[mode]}・${pal().map(c=>c.k).join("")}・${QN}問</div>
     <div class="big">${fmt(ms)}</div>
     <div class="sub">${msg}</div>
     ${mode==="voice"&&unheard.length?`<div class="misslog">色として聞き取れなかった言葉：${unheard.map(t=>`「${t.replace(/[<>&]/g,"")}」`).join(" ")}</div>`:""}
