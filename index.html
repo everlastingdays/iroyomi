@@ -52,6 +52,7 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 .mode:active{transform:scale(.98)}
 .mode h2{margin:0;font-size:24px;font-family:var(--f-word)}
 .mode p{margin:0;color:var(--muted);font-size:16px;line-height:1.6}
+.mode .tag{font-size:14px;color:var(--muted)}
 .mode .best{margin-top:6px;font-size:15px;color:var(--fg);font-variant-numeric:tabular-nums}
 .hist{color:var(--muted);font-size:14px;font-variant-numeric:tabular-nums;line-height:1.7;overflow:auto;min-height:0}
 
@@ -114,6 +115,33 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 .row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
 .row .alt{background:var(--panel);border-radius:16px;padding:18px 26px;font-size:20px}
 
+/* ルール切り替えの印と、時間制限のバー */
+.cue{position:absolute;top:6px;left:50%;transform:translateX(-50%);border-radius:999px;padding:6px 22px;
+  font-family:var(--f-word);font-size:clamp(22px,3.4vw,30px);font-weight:800;border:3px solid var(--fg);color:var(--fg);background:var(--bg);z-index:1;white-space:nowrap}
+.cue.read{background:var(--fg);color:var(--bg)}
+.stage.read{outline:6px dashed var(--fg);outline-offset:-6px;border-radius:6px}
+.limit{height:10px;background:var(--panel);border-radius:999px;overflow:hidden}
+.limit div{height:100%;background:var(--c-yellow);width:100%;transform-origin:left;transform:scaleX(1)}
+/* 位置のストループ：文字を上下左右に置く */
+.stage.pos .word{position:absolute;font-size:clamp(70px,13vw,140px)}
+.stage.pos .word.p0{top:20%;left:50%;transform:translateX(-50%)}
+.stage.pos .word.p1{bottom:4%;left:50%;transform:translateX(-50%)}
+.stage.pos .word.p2{left:4%;top:50%;transform:translateY(-50%)}
+.stage.pos .word.p3{right:4%;top:50%;transform:translateY(-50%)}
+.stage.pos::before{content:"";position:absolute;left:50%;top:50%;width:14px;height:14px;margin:-7px;border-radius:50%;background:var(--line)}
+.word.num{letter-spacing:.08em;font-size:clamp(90px,18vw,200px)}
+/* 一覧モードの小さな版 */
+.cell{position:relative}
+.cell.read{outline:4px dashed var(--fg);outline-offset:-8px}
+.cell.read::after{content:"もじ";position:absolute;top:6px;right:10px;font-size:14px;color:var(--fg);font-family:var(--f-ui)}
+.cell.pos{display:block}
+.cell.pos span{position:absolute;font-size:clamp(26px,4.4vw,48px)}
+.cell .p0{top:6%;left:50%;transform:translateX(-50%)} .cell .p1{bottom:6%;left:50%;transform:translateX(-50%)}
+.cell .p2{left:8%;top:50%;transform:translateY(-50%)} .cell .p3{right:8%;top:50%;transform:translateY(-50%)}
+.cell.num{font-size:clamp(26px,4.6vw,56px);letter-spacing:.04em}
+.opt{display:inline-flex;align-items:center;gap:8px}
+.opt small{color:var(--muted);font-size:13px}
+
 /* countdown */
 .count{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);
   font-family:var(--f-word);font-size:160px;font-weight:800;z-index:5}
@@ -126,47 +154,79 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 <div class="count" id="count" hidden></div>
 
 <script>
-const COLORS=[
-  {k:"赤",v:"var(--c-red)"},{k:"青",v:"var(--c-blue)"},{k:"黄",v:"var(--c-yellow)"},
-  {k:"緑",v:"var(--c-green)"},{k:"紫",v:"var(--c-purple)"},{k:"白",v:"var(--c-white)"}];
+/* ===================== 設定と保存 ===================== */
 const QN=20;
-const APP_VER="12";
+const APP_VER="13";
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+
+const COLORS=[
+  {k:"赤",v:"var(--c-red)",en:"red"},{k:"青",v:"var(--c-blue)",en:"blue"},{k:"黄",v:"var(--c-yellow)",en:"yellow"},
+  {k:"緑",v:"var(--c-green)",en:"green"},{k:"紫",v:"var(--c-purple)",en:"purple"},{k:"白",v:"var(--c-white)",en:"white"}];
+// 声で答えるとき、その答えとみなす言葉（聞き間違えやすい言葉・ローマ字・英語も含む）
+const VARIANTS={
+  "赤":["赤","あか","朱","垢","明か","阿賀","あが","赤色","あかいろ","aka","akka","ahka","red","rid","led","wred"],
+  "青":["青","あお","蒼","碧","葵","青色","あおいろ","あーお","あおう","はお","あほ","ao","aoh","blue","blew","bloo"],
+  "黄":["黄","きいろ","きーろ","黄色","き色","期以後","木色","気色","きいろう","きろ","kiiro","kiro","kero","keyiro","yellow","yello","hello"],
+  "緑":["緑","みどり","翠","見取り","みどりいろ","緑色","見とり","みろり","みどれ","midori","medori","medory","midory","green","greene","grin","grain"],
+  "紫":["紫","むらさき","村崎","村先","紫色","むらさきいろ","むらさ","murasaki","murasaky","purple","purpel","people"],
+  "白":["白","しろ","城","代","四郎","白色","しろいろ","しろう","shiro","shirou","shero","white","whyte","wight"]};
+COLORS.forEach(c=>c.words=VARIANTS[c.k]);
+const NUMS=[
+  {k:"1",en:"one",words:["1","一","いち","いっこ","1個","ひとつ","1つ","one","won"]},
+  {k:"2",en:"two",words:["2","二","に","にこ","2個","ふたつ","2つ","two"]},
+  {k:"3",en:"three",words:["3","三","さん","さんこ","3個","みっつ","3つ","three","tree"]},
+  {k:"4",en:"four",words:["4","四","よん","よんこ","4個","よっつ","4つ","four","for"]}];
+const POS=[
+  {k:"上",en:"up",words:["上","うえ","植え","飢え","ue","up","top"]},
+  {k:"下",en:"down",words:["下","した","舌","shita","down","bottom"]},
+  {k:"左",en:"left",words:["左","ひだり","hidari","left"]},
+  {k:"右",en:"right",words:["右","みぎ","migi","right"]}];
+
+/* 遊ぶもの：color=色 / number=数（個数を答える）/ pos=位置（場所を答える） */
+const TYPES={
+  color:{name:"色",title:"色のストループ",ask:"色",askVerb:"色を答える",read:"文字を読む"},
+  number:{name:"数",title:"数のストループ",ask:"個数",askVerb:"個数を答える",read:"数字を読む"},
+  pos:{name:"位置",title:"位置のストループ",ask:"場所",askVerb:"場所を答える",read:"文字を読む"}};
+let gameType=store.get("iroyomi.type","color");if(!TYPES[gameType])gameType="color";
+// 工夫：sw=ルール切り替え / fast=だんだん速く / same=同じ問題も混ぜる
+let opts=Object.assign({sw:false,fast:false,same:false},store.get("iroyomi.opts",{}));
+
 // 使う色（COLORSの番号）。最低3色
 let colorSet=store.get("iroyomi.colors",null);
 if(!Array.isArray(colorSet)||colorSet.length<3){const lv=store.get("iroyomi.level",4);colorSet=lv===6?[0,1,2,3,4,5]:[0,1,2,3]}
-let level=colorSet.length;
 let cvMode=store.get("iroyomi.cv","std");   // "std"=標準の色 / "clear"=見分けやすい色
 function applyCv(){try{document.documentElement.dataset.cv=cvMode}catch(e){}}
 applyCv();
 const app=document.getElementById("app");
 let tick=null,wake=null;
 
-/* ---------- 効果音（その場で合成するのでオフラインでも鳴る） ---------- */
+const pal=()=>colorSet.map(i=>COLORS[i]);
+/** 今の遊び方で使う答えの選択肢 */
+const choices=()=>gameType==="color"?pal():gameType==="number"?NUMS:POS;
+const esc=t=>String(t).replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));
+
+/* ===================== 効果音（その場で合成するのでオフラインでも鳴る） ===================== */
 let soundOn=store.get("iroyomi.sound",true);
 const snd={ctx:null,
   unlock(){if(!soundOn)return;try{if(!this.ctx){const A=window.AudioContext||window.webkitAudioContext;if(A)this.ctx=new A()}
     if(this.ctx&&this.ctx.state!=="running")this.ctx.resume()}catch(e){}},
   close(){const c=this.ctx;this.ctx=null;try{c&&c.close()}catch(e){}},
-  sleep(){try{if(this.ctx&&this.ctx.state==="running")return this.ctx.suspend()}catch(e){}return Promise.resolve()},
   wake(){try{if(this.ctx&&this.ctx.state!=="running")return this.ctx.resume()}catch(e){}return Promise.resolve()},
-  tone(f,start,dur,{type="sine",vol=.35,decay=true,to=null}={}){
+  tone(f,start,dur,{type="sine",vol=.35,decay=true}={}){
     const c=this.ctx;if(!c||!soundOn)return;const t=c.currentTime+start;
     const o=c.createOscillator(),g=c.createGain();o.type=type;o.frequency.setValueAtTime(f,t);
-    if(to)o.frequency.linearRampToValueAtTime(to,t+dur);
     g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+.012);
     if(decay)g.gain.exponentialRampToValueAtTime(0.0001,t+dur);else{g.gain.setValueAtTime(vol,t+dur-.03);g.gain.linearRampToValueAtTime(0.0001,t+dur)}
     o.connect(g).connect(c.destination);o.start(t);o.stop(t+dur+.05)},
-  pinpon(){ // ピンポーン：高い音→少し低い音、鐘のように響く
-    this.tone(1319,0,.45,{vol:.32});this.tone(2638,0,.25,{vol:.06});
-    this.tone(1047,.22,1.1,{vol:.34});this.tone(2094,.22,.5,{vol:.06})},
-  bubuu(){ // ブッブー：低いブザー2回
-    this.tone(148,0,.16,{type:"sawtooth",vol:.22,decay:false});this.tone(152,0,.16,{type:"square",vol:.1,decay:false});
+  pinpon(){this.tone(1319,0,.45,{vol:.32});this.tone(2638,0,.25,{vol:.06});this.tone(1047,.22,1.1,{vol:.34});this.tone(2094,.22,.5,{vol:.06})},
+  bubuu(){this.tone(148,0,.16,{type:"sawtooth",vol:.22,decay:false});this.tone(152,0,.16,{type:"square",vol:.1,decay:false});
     this.tone(148,.22,.55,{type:"sawtooth",vol:.22,decay:false});this.tone(152,.22,.55,{type:"square",vol:.1,decay:false})},
   beep(hi){this.tone(hi?1568:784,0,hi?.35:.14,{type:"triangle",vol:.25})},
   fanfare(){[784,988,1175,1568].forEach((f,i)=>this.tone(f,i*.11,i===3?.7:.18,{type:"triangle",vol:.25}))}
 };
+
+/* ===================== 共通の道具 ===================== */
 function makeClock(){
   let acc=0,from=performance.now(),run=true;
   const c={t:()=>acc+(run?performance.now()-from:0),
@@ -175,32 +235,66 @@ function makeClock(){
   tick=setInterval(()=>{const e=document.getElementById("tm");if(e)e.textContent=(c.t()/1000).toFixed(1)},100);
   return c;
 }
-function showJudge(st,ok,said,answer,p){
-  const chip=k=>k>=0?`<b style="color:${p[k].v}">${p[k].k}</b>`:`<b>―</b>`;
-  const j=document.createElement("div");j.className="judge "+(ok?"ok":"ng");
-  j.innerHTML=`<svg class="mark" viewBox="0 0 100 100" aria-label="${ok?"正解":"不正解"}">${ok?'<circle cx="50" cy="50" r="38" fill="none" stroke="currentColor" stroke-width="13"/>':'<path d="M18 18L82 82M82 18L18 82" stroke="currentColor" stroke-width="15" stroke-linecap="round"/>'}</svg><div class="says"><span>あなたの答え${chip(said)}</span>${ok?"":`<span>正解${chip(answer)}</span>`}</div>`;
-  st.appendChild(j);st.classList.toggle("ng",!ok);
-  ok?snd.pinpon():snd.bubuu();
-  return ()=>{j.remove();st.classList.remove("ng")};
-}
-const OK_MS=750,NG_MS=1400;
-
 const fmt=ms=>(ms/1000).toFixed(1)+"秒";
-const pal=()=>colorSet.map(i=>COLORS[i]);
 const rnd=n=>Math.floor(Math.random()*n);
-function makeItems(n){
-  const p=pal(),out=[];
-  while(out.length<n){
-    const w=rnd(p.length);let c=rnd(p.length-1);if(c>=w)c++;
-    const prev=out[out.length-1];
-    if(prev&&(prev.w===w||prev.c===c))continue;
-    out.push({w,c});
-  }return out;
-}
 async function keepAwake(){try{wake=await navigator.wakeLock?.request("screen")}catch(e){}}
 function release(){try{wake?.release()}catch(e){}wake=null}
 function stopTimer(){clearInterval(tick);tick=null}
-function key(mode){return colorSet.join("")==="0123"?`iroyomi.${mode}.4`:colorSet.join("")==="012345"?`iroyomi.${mode}.6`:`iroyomi.${mode}.c${colorSet.join("")}`}
+
+/** 問題を作る。a=書いてあるもの、b=答える性質（色・個数・場所）、read=「文字を読む」問題 */
+function makeItems(n,m){
+  const out=[];let guard=0;
+  while(out.length<n&&guard++<5000){
+    const a=rnd(m);let b;
+    if(opts.same&&Math.random()<0.25)b=a;           // 同じ問題（赤い字で「赤」など）
+    else{b=rnd(m-1);if(b>=a)b++}
+    const read=opts.sw&&out.length>0&&Math.random()<0.3;
+    const it={a,b,read,ans:read?a:b};
+    const prev=out[out.length-1];
+    if(prev&&(prev.a===a&&prev.b===b))continue;
+    if(prev&&prev.ans===it.ans&&Math.random()<0.7)continue;   // 同じ答えが続きすぎないように
+    out.push(it);
+  }return out;
+}
+/** 1問の見た目（大きく1つ表示） */
+function renderItem(st,wd,it,ch){
+  st.classList.toggle("pos",gameType==="pos");
+  wd.className="word";wd.style.color="";
+  if(gameType==="color"){wd.textContent=ch[it.a].k;wd.style.color=ch[it.b].v}
+  else if(gameType==="number"){wd.textContent=ch[it.a].k.repeat(it.b+1);wd.classList.add("num")}
+  else{wd.textContent=ch[it.a].k;wd.classList.add("p"+it.b)}
+  let cue=st.querySelector(".cue");
+  if(opts.sw){if(!cue){cue=document.createElement("div");st.appendChild(cue)}
+    cue.className="cue"+(it.read?" read":"");cue.textContent=it.read?TYPES[gameType].read:TYPES[gameType].askVerb}
+  st.classList.toggle("read",!!it.read);
+}
+/** 一覧モードの1マスの中身 */
+function cellHTML(it,ch,i){
+  const cls="cell"+(it.read?" read":"")+(gameType==="pos"?" pos":"")+(gameType==="number"?" num":"");
+  if(gameType==="color")return `<button class="${cls}" data-i="${i}" style="color:${ch[it.b].v}">${ch[it.a].k}</button>`;
+  if(gameType==="number")return `<button class="${cls}" data-i="${i}">${ch[it.a].k.repeat(it.b+1)}</button>`;
+  return `<button class="${cls}" data-i="${i}"><span class="p${it.b}">${ch[it.a].k}</span></button>`;
+}
+function chipHTML(k,ch){
+  if(k===-2)return `<b>時間切れ</b>`;
+  if(k<0)return `<b>―</b>`;
+  return `<b style="color:${ch[k].v||"var(--fg)"}">${ch[k].k}</b>`;
+}
+function showJudge(st,ok,said,answer,ch,withSound){
+  const j=document.createElement("div");j.className="judge "+(ok?"ok":"ng");
+  j.innerHTML=`<svg class="mark" viewBox="0 0 100 100" aria-label="${ok?"正解":"不正解"}">${ok?'<circle cx="50" cy="50" r="38" fill="none" stroke="currentColor" stroke-width="13"/>':'<path d="M18 18L82 82M82 18L18 82" stroke="currentColor" stroke-width="15" stroke-linecap="round"/>'}</svg><div class="says"><span>あなたの答え${chipHTML(said,ch)}</span>${ok?"":`<span>正解${chipHTML(answer,ch)}</span>`}</div>`;
+  st.appendChild(j);st.classList.add(ok?"ok-j":"ng");
+  if(withSound)ok?snd.pinpon():snd.bubuu();
+  return ()=>{j.remove();st.classList.remove("ng","ok-j")};
+}
+const OK_MS=750,NG_MS=1400;
+
+/* ===================== 記録 ===================== */
+function key(mode){
+  let t=gameType==="color"?(colorSet.join("")==="0123"?"4":colorSet.join("")==="012345"?"6":"c"+colorSet.join("")):gameType;
+  const o=(opts.sw?"s":"")+(opts.same?"m":"")+(opts.fast&&mode!=="list"?"f":"");
+  return `iroyomi.${mode}.${t}${o?"."+o:""}`;
+}
 function record(mode,ms,miss){
   const r=store.get(key(mode),{best:null,log:[]});
   const isBest=miss===0&&(r.best===null||ms<r.best);
@@ -209,49 +303,70 @@ function record(mode,ms,miss){
   r.log.unshift({t:ms,m:miss,d:`${d.getMonth()+1}/${d.getDate()}`});r.log=r.log.slice(0,8);
   store.set(key(mode),r);return isBest;
 }
+function setLabel(){
+  const parts=[TYPES[gameType].name+(gameType==="color"?"（"+pal().map(c=>c.k).join("")+"）":"")];
+  if(opts.sw)parts.push("切り替え");if(opts.fast)parts.push("速く");if(opts.same)parts.push("同じも混ぜる");
+  return parts.join("・");
+}
 
+/* ===================== メニュー ===================== */
+function ruleText(){
+  const sw=opts.sw?`<br>「${TYPES[gameType].read}」の印が出たときだけ、書いてある文字をそのまま読みます。`:"";
+  if(gameType==="number")return `例：<b style="color:var(--fg)">33</b> のように「3」が2個並んでいたら「に」と答えます。数字ではなく<strong>個数</strong>を答えます。${sw}`;
+  if(gameType==="pos")return `例：「上」という字が画面の<strong>下</strong>にあったら「した」と答えます。文字ではなく<strong>場所</strong>を答えます。${sw}`;
+  return `例：<b>青</b> と赤い色で書いてあったら「あか」と声に出して答えます。文字につられないのがコツです。${sw}`;
+}
 function home(){
   stopTimer();release();if(typeof stopVoice==='function')stopVoice();
   const L=store.get(key("list"),{best:null,log:[]}),O=store.get(key("one"),{best:null,log:[]}),V=store.get(key("voice"),{best:null,log:[]});
   const logs=[...V.log.map(x=>({...x,n:"声"})),...L.log.map(x=>({...x,n:"一覧"})),...O.log.map(x=>({...x,n:"1問ずつ"}))].slice(0,6);
-  app.innerHTML=`<div class="screen">
-   <div class="brand"><h1><span>い</span><span>ろ</span><span>よ</span><span>み</span></h1><p>文字ではなく「色」を答える脳トレ</p></div>
-   <div class="rule">例：<b>青</b> と赤い色で書いてあったら「あか」と声に出して答えます。文字につられないのがコツです。</div>
-   <div class="lv"><span class="lab">使う色</span>
+  const T=TYPES[gameType];
+  app.innerHTML=`<div class="screen" style="overflow:auto">
+   <div class="brand"><h1><span>い</span><span>ろ</span><span>よ</span><span>み</span></h1><p>文字につられない脳トレ</p></div>
+   <div class="lv"><span class="lab">遊ぶもの</span>
+     ${Object.keys(TYPES).map(t=>`<button class="seg" data-ty="${t}" aria-pressed="${gameType===t}">${TYPES[t].title}</button>`).join("")}</div>
+   <div class="rule">${ruleText()}</div>
+   ${gameType==="color"?`<div class="lv"><span class="lab">使う色</span>
      ${COLORS.map((c,i)=>`<button class="chip" data-ci="${i}" aria-pressed="${colorSet.includes(i)}" style="color:${c.v}">${c.k}</button>`).join("")}
      <span class="note">タップで選ぶ（3色以上）</span></div>
    <div class="lv"><span class="lab">色の見え方</span>
      <button class="seg" data-cv="std" aria-pressed="${cvMode==="std"}">標準</button>
-     <button class="seg" data-cv="clear" aria-pressed="${cvMode==="clear"}">見分けやすい色</button>
-     <span class="lab" style="margin-left:12px">効果音</span>
-     <button class="seg" id="sndBtn" aria-pressed="${soundOn}">${soundOn?"あり":"なし"}</button></div>
-   ${SR?`<div class="lv"><span class="lab">声で答える言葉</span>
-     <button class="seg" data-vl="ja" aria-pressed="${voiceLang==="ja"}">日本語（あか・あお）</button>
-     <button class="seg" data-vl="en" aria-pressed="${voiceLang==="en"}">英語（red・blue）</button>
-     <button class="seg" id="micTest">聞き取りテスト</button></div>`:""}
+     <button class="seg" data-cv="clear" aria-pressed="${cvMode==="clear"}">見分けやすい色</button></div>`:""}
+   <div class="lv"><span class="lab">工夫</span>
+     <button class="seg" data-op="sw" aria-pressed="${opts.sw}">ルール切り替え</button>
+     <button class="seg" data-op="fast" aria-pressed="${opts.fast}">だんだん速く</button>
+     <button class="seg" data-op="same" aria-pressed="${opts.same}">同じ問題も混ぜる</button></div>
+   <div class="lv"><span class="lab">効果音</span>
+     <button class="seg" id="sndBtn" aria-pressed="${soundOn}">${soundOn?"あり":"なし"}</button>
+     ${SR?`<span class="lab" style="margin-left:12px">声で答える言葉</span>
+     <button class="seg" data-vl="ja" aria-pressed="${voiceLang==="ja"}">日本語</button>
+     <button class="seg" data-vl="en" aria-pressed="${voiceLang==="en"}">英語</button>
+     <button class="seg" id="micTest">聞き取りテスト</button>`:""}</div>
    <div class="modes">
      <button class="mode" id="mList"><h2>一覧で読み上げ</h2>
-       <p>${QN}個の文字が並びます。左上から順に色を声に出し、言えたら指でタップ。全部消えたらタイム確定。</p>
+       <p>${QN}個が並びます。左上から順に${T.ask}を声に出し、言えたら指でタップ。全部消えたらタイム確定。${opts.fast?"（「だんだん速く」はこのモードでは使いません）":""}</p>
        <div class="best">ベスト ${L.best?fmt(L.best):"―"}</div></button>
      <button class="mode" id="mOne"><h2>1問ずつボタンで</h2>
-       <p>文字が1つずつ出ます。色を声に出しながら、その色のボタンを押します。${QN}問のタイムとまちがい数。</p>
+       <p>1つずつ出ます。${T.ask}を声に出しながら、ボタンを押します。${QN}問のタイムとまちがい数。</p>
        <div class="best">ベスト ${O.best?fmt(O.best):"―"}（ノーミス）</div></button>
      <button class="mode" id="mVoice" ${SR?"":"disabled"}><h2>声で答える（試験版）</h2>
-       <p>${SR?`文字が1つずつ出ます。色を${voiceLang==="en"?"英語で":""}声に出すだけで自動で判定して次へ進みます。${QN}問のタイムとまちがい数。<br>※音声認識を安定させるため、このモードでは効果音は鳴りません`:"このブラウザでは音声認識が使えません。iPadのSafariで開いてください。"}</p>
+       <p>${SR?`1つずつ出ます。${T.ask}を${voiceLang==="en"?"英語で":""}声に出すだけで自動で判定。<br>※このモードでは効果音は鳴りません`:"このブラウザでは音声認識が使えません。iPadのSafariで開いてください。"}</p>
        <div class="best">ベスト ${V.best?fmt(V.best):"―"}（ノーミス）</div></button>
    </div>
+   ${logs.length?`<div class="hist">最近の記録（${setLabel()}）　${logs.map(x=>`${x.d} ${x.n} ${fmt(x.t)}${x.m?`・ミス${x.m}`:""}`).join("　／　")}</div>`:""}
    <div class="ver">いろよみ 版 ${APP_VER}</div>
-   ${logs.length?`<div class="hist">最近の記録（${pal().map(c=>c.k).join("")}）　${logs.map(x=>`${x.d} ${x.n} ${fmt(x.t)}${x.m?`・ミス${x.m}`:""}`).join("　／　")}</div>`:""}
   </div>`;
+  app.querySelectorAll(".seg[data-ty]").forEach(b=>b.onclick=()=>{gameType=b.dataset.ty;store.set("iroyomi.type",gameType);home()});
   app.querySelectorAll(".chip[data-ci]").forEach(b=>b.onclick=()=>{const i=+b.dataset.ci;
     if(colorSet.includes(i)){if(colorSet.length<=3)return;colorSet=colorSet.filter(x=>x!==i)}else colorSet=[...colorSet,i].sort();
-    level=colorSet.length;store.set("iroyomi.colors",colorSet);home()});
+    store.set("iroyomi.colors",colorSet);home()});
   app.querySelectorAll(".seg[data-cv]").forEach(b=>b.onclick=()=>{cvMode=b.dataset.cv;store.set("iroyomi.cv",cvMode);applyCv();home()});
+  app.querySelectorAll(".seg[data-op]").forEach(b=>b.onclick=()=>{opts[b.dataset.op]=!opts[b.dataset.op];store.set("iroyomi.opts",opts);home()});
   app.querySelectorAll(".seg[data-vl]").forEach(b=>b.onclick=()=>{voiceLang=b.dataset.vl;store.set("iroyomi.voiceLang",voiceLang);home()});
   if(SR)micTest.onclick=()=>endVoiceSession("test");
   sndBtn.onclick=()=>{soundOn=!soundOn;store.set("iroyomi.sound",soundOn);snd.unlock();if(soundOn)snd.pinpon();home()};
   mList.onclick=()=>countdown(playList);
-  mOne.onclick=()=>countdown(playOne);
+  mOne.onclick=()=>countdown(()=>playQuiz("one"));
   if(SR)mVoice.onclick=()=>endVoiceSession("voice");
 }
 
@@ -260,21 +375,19 @@ function countdown(next){
   const el=document.getElementById("count");let n=3;el.hidden=false;el.textContent=n;keepAwake();snd.beep(false);
   const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;snd.beep(true);next()}else{el.textContent=n;snd.beep(false)}},700);
 }
-
 function bar(info){
   return `<div class="bar"><button class="back" id="back">← やめる</button><div class="info">${info}</div><div class="timer" id="tm">0.0</div></div>`;
 }
-function startClock(){return makeClock()}
 
+/* ===================== 一覧で読み上げ ===================== */
 function playList(){
-  const items=makeItems(QN),p=pal();let left=QN;
+  const ch=choices(),items=makeItems(QN,ch.length);let left=QN;
   const cols=window.innerWidth<600?4:5;
-  app.innerHTML=`<div class="screen">${bar("色を声に出して、言えたらタップ")}
-    <div class="grid" style="grid-template-columns:repeat(${cols},1fr)">${items.map((it,i)=>
-      `<button class="cell" data-i="${i}" style="color:${p[it.c].v}">${p[it.w].k}</button>`).join("")}</div>
+  app.innerHTML=`<div class="screen">${bar(`${TYPES[gameType].ask}を声に出して、言えたらタップ`)}
+    <div class="grid" style="grid-template-columns:repeat(${cols},1fr)">${items.map((it,i)=>cellHTML(it,ch,i)).join("")}</div>
     <button class="go" id="fin">全部言えた</button></div>`;
   back.onclick=home;
-  const clk=startClock();
+  const clk=makeClock();
   const end=()=>{stopTimer();result("list",clk.t(),0)};
   app.querySelectorAll(".cell").forEach(c=>c.onclick=()=>{
     if(c.classList.contains("done")){c.classList.remove("done");left++;return}
@@ -282,54 +395,89 @@ function playList(){
   fin.onclick=end;
 }
 
-function playOne(){
-  const items=makeItems(QN),p=pal();let i=0,miss=0,lock=false;
-  const order=p.map((_,k)=>k);
+/* ===================== 1問ずつ（ボタン / 声） ===================== */
+function playQuiz(mode){
+  const voice=mode==="voice",ch=choices(),items=makeItems(QN,ch.length);let st,wd,lm,no,pg,hd,sk;
+  let i=0,miss=0,lock=false,skipT=null,clk=null,limitT=null;
+  // だんだん速く：1問の制限時間。正解で短く、まちがいで長く
+  const LIM0=voice?4000:3000,LIM_MIN=voice?1500:900;let limit=LIM0,bestLimit=LIM0;
+  const cols=ch.length<=4?ch.length:3;
+  const en=voice&&voiceLang==="en";
   app.innerHTML=`<div class="screen">${bar(`<span id="no">1</span> / ${QN}`)}
     <div class="progress"><div id="pg"></div></div>
+    ${opts.fast?`<div class="limit"><div id="lm"></div></div>`:""}
     <div class="stage" id="st"><div class="word" id="wd"></div></div>
-    <div class="answers" style="grid-template-columns:repeat(${level<=4?level:3},1fr)">${order.map(k=>
-      `<button class="ans" data-k="${k}"><i style="background:${p[k].v}"></i>${p[k].k}</button>`).join("")}</div></div>`;
-  back.onclick=home;
-  const show=()=>{const it=items[i];wd.textContent=p[it.w].k;wd.style.color=p[it.c].v;no.textContent=i+1;pg.style.width=(i/QN*100)+"%"};
-  show();const clk=startClock();
-  app.querySelectorAll(".ans").forEach(b=>b.onclick=()=>{
-    if(lock)return;const said=+b.dataset.k,ok=said===items[i].c;if(!ok)miss++;
-    lock=true;clk.pause();const clear=showJudge(st,ok,said,items[i].c,p);
-    setTimeout(()=>{clear();lock=false;i++;
-      if(i>=QN){stopTimer();result("one",clk.t(),miss)}else{show();clk.resume()}},ok?OK_MS:NG_MS);
-  });
+    ${voice?`<div class="heard" id="hd"></div>
+      <p class="hint">${en?ch.map(c=>c.en).join("・")+" で答えます":gameType==="color"?"聞き取りにくいときは「あかいろ」のように「いろ」を付けると伝わりやすくなります":gameType==="number"?"「いっこ」「にこ」のように「こ」を付けると伝わりやすくなります":"うえ・した・ひだり・みぎ で答えます"}</p>
+      <div class="mic on" id="mc"><i></i><span id="mt">聞いています</span></div>
+      <button class="skip" id="sk" hidden>聞き取れないのでとばす</button>`
+    :`<div class="answers" style="grid-template-columns:repeat(${cols},1fr)">${ch.map((c,k)=>
+      `<button class="ans" data-k="${k}">${c.v?`<i style="background:${c.v}"></i>`:""}${c.k}</button>`).join("")}</div>`}
+  </div>`;
+  st=document.getElementById("st");wd=document.getElementById("wd");lm=document.getElementById("lm");no=document.getElementById("no");
+  pg=document.getElementById("pg");hd=document.getElementById("hd");sk=document.getElementById("sk");
+  back.onclick=()=>{clearTimeout(limitT);clearTimeout(skipT);lock=true;voice?endVoiceSession("menu"):home()};
+  const startLimit=()=>{
+    if(!opts.fast)return;clearTimeout(limitT);
+    lm.style.transition="none";lm.style.transform="scaleX(1)";void lm.offsetWidth;
+    lm.style.transition=`transform ${limit}ms linear`;lm.style.transform="scaleX(0)";
+    limitT=setTimeout(()=>judge(-2),limit);
+  };
+  const show=()=>{
+    renderItem(st,wd,items[i],ch);no.textContent=i+1;pg.style.width=(i/QN*100)+"%";
+    if(voice){hd.textContent=`${TYPES[gameType].ask}を声に出してください`;sk.hidden=true;clearTimeout(skipT);
+      skipT=setTimeout(()=>{if(document.getElementById("sk"))sk.hidden=false},5000)}
+    startLimit();
+  };
+  const judge=k=>{
+    if(lock||!document.getElementById("st")||document.getElementById("st")!==st)return;   // 画面を離れたあとは何もしない
+    lock=true;clearTimeout(limitT);clearTimeout(skipT);
+    const ans=items[i].ans,ok=k===ans;if(!ok)miss++;
+    if(opts.fast){if(ok){limit=Math.max(LIM_MIN,Math.round(limit*0.88));bestLimit=Math.min(bestLimit,limit)}else limit=Math.min(LIM0,Math.round(limit*1.25));
+      lm.style.transition="none";}
+    clk.pause();
+    const clear=showJudge(st,ok,k,ans,ch,!voice);   // 声モードでは音は鳴らさない
+    setTimeout(()=>{
+      clear();i++;
+      if(i>=QN){if(voice)stopVoice();stopTimer();result(mode,clk.t(),miss,opts.fast?bestLimit:null);return}
+      lock=false;show();clk.resume();
+    },ok?OK_MS:NG_MS);
+  };
+  if(voice){
+    sk.onclick=()=>judge(-1);
+    onGiveUp=()=>{clearTimeout(skipT);clearTimeout(limitT)};
+    onStatus=(fresh,on)=>{
+      const h=document.getElementById("hd"),m=document.getElementById("mc");
+      if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
+      if(fresh&&h&&!lock)h.innerHTML=`聞こえた言葉 <b>${esc(fresh)}</b>`;
+    };
+    matchPal=ch;
+    onColor=k=>{if(!lock)judge(k)};   // 判定表示中に言った答えは使わずに捨てる
+    if(rec)onStatus(null,true);
+  }else{
+    app.querySelectorAll(".ans").forEach(b=>b.onclick=()=>judge(+b.dataset.k));
+  }
+  show();clk=makeClock();
 }
 
-/* ---------- voice mode ---------- */
-const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-// その色とみなす言葉の一覧。iPadが英語で聞き取ってしまった場合（ローマ字・英単語）にも対応する
-// （カタカナはひらがなに、英字は小文字に直してから照合）
-const VARIANTS={
-  "赤":["赤","あか","朱","垢","明か","阿賀","あが","赤色","あかいろ","aka","akka","ahka","red","rid","led","wred"],
-  "青":["青","あお","蒼","碧","葵","青色","あおいろ","あーお","あおう","はお","あほ","ao","aoh","blue","blew","bloo"],
-  "黄":["黄","きいろ","きーろ","黄色","き色","期以後","木色","気色","きいろう","きろ","kiiro","kiro","kero","keyiro","yellow","yello","hello"],
-  "緑":["緑","みどり","翠","見取り","みどりいろ","緑色","見とり","みろり","みどれ","midori","medori","medory","midory","green","greene","grin","grain"],
-  "紫":["紫","むらさき","村崎","村先","紫色","むらさきいろ","むらさ","murasaki","murasaky","purple","purpel","people"],
-  "白":["白","しろ","城","代","四郎","白色","しろいろ","しろう","shiro","shirou","shero","white","whyte","wight"]};
-const EN_NAME={"赤":"red","青":"blue","黄":"yellow","緑":"green","紫":"purple","白":"white"};
-const toHira=t=>t.replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)).toLowerCase().replace(/[\s。、．，,.！？!?'"’\-]/g,"");
-let voiceLang=store.get("iroyomi.voiceLang","ja");   // "ja"=日本語で答える / "en"=英語で答える
-/* ---------- 音声認識 ----------
+/* ===================== 音声認識 =====================
    iPadの音声認識は、他のアプリの音声入力と共通の仕組みを使っている。
-   起動・停止をくり返すとiPad全体の音声入力が不安定になるので、
    ・1回のゲーム中は音声認識を1つだけ起動し、問題ごとに止めたりしない
    ・声モードでは効果音を鳴らさない（音の仕組みも完全に解放してから聞き始める）
    ・切れたときの再起動は間をあけ、くり返し切れるときはあきらめて止める
-   ・画面を閉じたり別アプリに切り替えたら、すぐ音声認識を終了する */
+   ・使い終わったらページを読み込み直してマイクを確実に手放す */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const toHira=t=>t.replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)).replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+  .toLowerCase().replace(/[\s。、．，,.！？!?'"’\-]/g,"");
+let voiceLang=store.get("iroyomi.voiceLang","ja");   // "ja"=日本語で答える / "en"=英語で答える
 let rec=null,srObj=null,voiceActive=false,restartT=null,restarts=[],voiceUsed=false;
-// matchPal: 判定に使う色 / onColor(k): 新しく色が聞こえたとき / onStatus(text,on): 表示の更新
+// matchPal: 判定に使う答えの一覧 / onColor(k): 新しく答えが聞こえたとき / onStatus(text,on): 表示の更新
 let matchPal=[],onColor=()=>{},onStatus=()=>{},onGiveUp=()=>{};
 let unheard=[];
 function missHeard(t){t=t.trim();if(t&&!unheard.includes(t)){unheard.push(t);if(unheard.length>12)unheard.shift()}}
-/* 文字列に出てくる色を、前から順にすべて拾う（例：「あかあおえーと赤」→ 赤,青,赤） */
+/* 文字列に出てくる答えを、前から順にすべて拾う（例：「あかあおえーと赤」→ 赤,青,赤） */
 function findAll(text,p){
-  const words=[];p.forEach((c,k)=>VARIANTS[c.k].forEach(v=>{const w=toHira(v);if(w)words.push({w,k})}));
+  const words=[];p.forEach((c,k)=>c.words.forEach(v=>{const w=toHira(v);if(w)words.push({w,k})}));
   const out=[];let i=0;
   while(i<text.length){
     let hit=null;
@@ -337,14 +485,6 @@ function findAll(text,p){
     if(hit){out.push({k:hit.k,at:i,end:i+hit.w.length});i+=hit.w.length}else i++;
   }
   return out;
-}
-function findColor(text,p){
-  let best=null;
-  p.forEach((c,k)=>VARIANTS[c.k].forEach(v=>{
-    const w=toHira(v),at=text.indexOf(w);
-    if(at>=0&&(!best||at<best.at))best={k,at,end:at+w.length};
-  }));
-  return best;
 }
 function stopVoice(){
   voiceActive=false;clearTimeout(restartT);restartT=null;
@@ -359,29 +499,26 @@ function voiceError(code){
     "language-not-supported":"この言語の音声認識が使えません。「設定」→「一般」→「キーボード」→「音声入力の言語」に日本語（英語モードなら英語）があるか確認してください。",
     "network":"音声認識にネット接続が必要と判断されました。このiPadではオフラインの音声認識が使えないようです。",
     "audio-capture":"マイクがうまく使えませんでした。少し待ってからもう一度試してください。",
-    "gave-up":"音声認識が何度も途切れたので、iPadに負担をかけないよう止めました。Safariのこのタブを閉じて1分ほど待ってから、もう一度開いてください。"}[code]||`音声認識でエラーが起きました（${code}）。`;
+    "gave-up":"音声認識が何度も途切れたので、iPadに負担をかけないよう止めました。Safariのこのタブを閉じて1分ほど待ってから、もう一度開いてください。"}[code]||`音声認識でエラーが起きました（${esc(code)}）。`;
   app.innerHTML=`<div class="screen"><div class="result"><div class="err">${why}</div>
     <div class="row"><button class="go" id="retry">もう一回試す</button><button class="alt" id="btnTop">メニューへ</button></div></div></div>`;
   retry.onclick=()=>endVoiceSession("voice");btnTop.onclick=()=>endVoiceSession("menu");
 }
 function listen(){
   if(rec)return;                        // すでに聞いているときは新しく起動しない
-  // 1回のページ表示につき音声認識は1つだけ作り、使い回す（新しく作り直すとiPadが手放さなくなるため）
-  if(!srObj)srObj=new SR();
+  if(!srObj)srObj=new SR();             // 1回のページ表示につき1つだけ作って使い回す
   const r=srObj;rec=r;r.lang=voiceLang==="en"?"en-US":"ja-JP";r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
   voiceActive=true;
   /* iPadは聞き取った言葉をあとから書き直すことがある（「あか」→「赤」など）。
-     文字の位置で区切ると書き直しでずれて前の答えを拾ってしまうので、
-     「何個目の色まで使ったか」を数えて、それより後に出てきた色だけを新しい答えにする */
+     「何個目の答えまで使ったか」を数えて、それより後に出てきた答えだけを新しい答えにする */
   const usedCount={};
   r.onresult=e=>{
     if(rec!==r)return;
     for(let i=e.resultIndex;i<e.results.length;i++){
       const res=e.results[i];
-      // 候補が複数あれば、色がいちばん多く見つかる候補を使う
       let text=toHira(res[0].transcript),ms=findAll(text,matchPal);
       for(let a=1;a<res.length;a++){const t=toHira(res[a].transcript),m=findAll(t,matchPal);if(m.length>ms.length){text=t;ms=m}}
-      let used=Math.min(usedCount[i]||0,ms.length);   // 書き直しで色が減ったときは数を合わせる（0には戻さない）
+      let used=Math.min(usedCount[i]||0,ms.length);
       const tail=text.slice(used>0?ms[used-1].end:0);
       if(tail)onStatus(tail);
       for(;used<ms.length;used++){usedCount[i]=used+1;onColor(ms[used].k)}
@@ -399,7 +536,6 @@ function listen(){
     if(rec!==r)return;
     rec=null;onStatus(null,false);
     if(!voiceActive)return;
-    // 途切れたら少し待ってから聞き直す。30秒に6回以上途切れたらあきらめる
     const now=Date.now();restarts=restarts.filter(t=>now-t<30000);restarts.push(now);
     if(restarts.length>6){onGiveUp();voiceError("gave-up");return}
     restartT=setTimeout(()=>{restartT=null;if(voiceActive&&!rec)listen()},400*restarts.length);
@@ -407,10 +543,7 @@ function listen(){
   voiceUsed=true;
   try{r.start()}catch(e){rec=null;voiceError("start-failed")}
 }
-/* 声を使い終わったら、ページを読み込み直してマイクを確実に手放す。
-   （iPadのSafariは、止めてもページを開いている間はマイクを握ったままになることがあり、
-    そのままだと他のアプリの音声入力まで使えなくなるため）
-   next: "menu"=メニューへ / "voice"=声モードをもう一回 / "test"=聞き取りテスト */
+/* next: "menu"=メニューへ / "voice"=声モードをもう一回 / "test"=聞き取りテスト */
 function endVoiceSession(next){
   stopVoice();snd.close();
   if(!voiceUsed){next==="voice"?startVoice():next==="test"?startTest():home();return}
@@ -418,28 +551,24 @@ function endVoiceSession(next){
   app.innerHTML=`<div class="screen"><div class="result"><div class="sub">マイクを片付けています…</div></div></div>`;
   setTimeout(()=>location.reload(),150);
 }
-// 画面を閉じた・別アプリに切り替えたときは、すぐ音声認識を終わらせる
 document.addEventListener("visibilitychange",()=>{if(document.hidden&&voiceUsed){stopVoice()}else if(!document.hidden&&voiceUsed&&!voiceActive&&document.getElementById("wd"))endVoiceSession("menu")});
 window.addEventListener("pagehide",()=>{stopVoice();snd.close()});
 
-function prepVoice(){
-  stopVoice();snd.close();             // 効果音の仕組みを完全に解放してから聞き始める
-  unheard=[];restarts=[];keepAwake();
-}
+function prepVoice(){stopVoice();snd.close();unheard=[];restarts=[];keepAwake()}
 function startVoice(){
   prepVoice();
-  matchPal=pal();onColor=()=>{};onStatus=()=>{};onGiveUp=()=>{};
+  matchPal=choices();onColor=()=>{};onStatus=()=>{};onGiveUp=()=>{};
   listen();                            // タップした瞬間に開始（マイク許可を出すため）
   const el=document.getElementById("count");let n=3;el.hidden=false;el.textContent=n;
-  const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;if(voiceActive||rec||restartT)playVoice()}else el.textContent=n},700);
+  const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;if(voiceActive||rec||restartT)playQuiz("voice")}else el.textContent=n},700);
 }
 /* 聞き取りテスト：iPadが何と聞き取っているかをそのまま表示する */
 function startTest(){
   prepVoice();
-  const p=COLORS;
+  const p=gameType==="color"?COLORS:choices();
   app.innerHTML=`<div class="screen">
-    <div class="bar"><button class="back" id="back">← もどる</button><div class="info">聞き取りテスト</div><div class="timer"></div></div>
-    <div class="rule">好きな色の名前を何回か言ってみてください。iPadが聞き取った言葉がそのまま下に出ます。
+    <div class="bar"><button class="back" id="back">← もどる</button><div class="info">聞き取りテスト（${TYPES[gameType].name}）</div><div class="timer"></div></div>
+    <div class="rule">${p.map(c=>c.k).join("・")} のどれかを何回か言ってみてください。iPadが聞き取った言葉がそのまま下に出ます。
       今の設定：<b style="font-size:18px;color:var(--fg)">${voiceLang==="en"?"英語（en-US）":"日本語（ja-JP）"}</b></div>
     <div class="stage" style="flex-direction:column;gap:18px">
       <div class="heard" id="raw" style="font-size:22px">聞いています…</div>
@@ -453,64 +582,31 @@ function startTest(){
   onStatus=(fresh,on)=>{
     const m=document.getElementById("mc"),r=document.getElementById("raw");
     if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
-    if(fresh&&r)r.innerHTML=`聞こえた言葉 <b>${fresh.replace(/[<>&]/g,"")}</b>`;
+    if(fresh&&r)r.innerHTML=`聞こえた言葉 <b>${esc(fresh)}</b>`;
   };
   matchPal=p;onGiveUp=()=>{};
-  onColor=k=>{const c=p[k];hit.textContent=c.k;hit.style.color=c.v;
-    lines.unshift(c.k);log.textContent="判定した色（新しい順）："+lines.slice(0,12).join("・")};
+  onColor=k=>{const c=p[k];hit.textContent=c.k;hit.style.color=c.v||"var(--fg)";
+    lines.unshift(c.k);log.textContent="判定した答え（新しい順）："+lines.slice(0,12).join("・")};
   listen();
 }
 
-function playVoice(){
-  const items=makeItems(QN),p=pal();let i=0,miss=0,lock=false,skipT=null,clk=null;
-  app.innerHTML=`<div class="screen">${bar(`<span id="no">1</span> / ${QN}`)}
-    <div class="progress"><div id="pg"></div></div>
-    <div class="stage" id="st"><div class="word" id="wd"></div></div>
-    <div class="heard" id="hd">色を声に出してください</div>
-    <p class="hint">${voiceLang==="en"?pal().map(c=>EN_NAME[c.k]).join("・")+" で答えます":"聞き取りにくいときは「あかいろ」「あおいろ」のように「いろ」を付けて言うと伝わりやすくなります"}</p>
-    <div class="mic on" id="mc"><i></i><span id="mt">聞いています</span></div>
-    <button class="skip" id="sk" hidden>聞き取れないのでとばす</button></div>`;
-  back.onclick=()=>endVoiceSession("menu");
-  const show=()=>{const it=items[i];wd.textContent=p[it.w].k;wd.style.color=p[it.c].v;no.textContent=i+1;pg.style.width=(i/QN*100)+"%";
-    hd.textContent="色を声に出してください";sk.hidden=true;clearTimeout(skipT);skipT=setTimeout(()=>{if(document.getElementById("sk"))sk.hidden=false},5000)};
-  const judge=k=>{
-    if(lock)return;lock=true;const ok=k===items[i].c;if(!ok)miss++;
-    clk.pause();clearTimeout(skipT);
-    const clear=showJudge(st,ok,k,items[i].c,p);   // 声モードでは音は鳴らない（大きな○×だけ）
-    setTimeout(()=>{
-      clear();i++;
-      if(i>=QN){stopVoice();stopTimer();result("voice",clk.t(),miss);return}
-      lock=false;show();clk.resume();
-    },ok?OK_MS:NG_MS);
-  };
-  sk.onclick=()=>judge(-1);
-  onGiveUp=()=>clearTimeout(skipT);
-  onStatus=(fresh,on)=>{
-    const h=document.getElementById("hd"),m=document.getElementById("mc");
-    if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
-    if(fresh&&h&&!lock)h.innerHTML=`聞こえた言葉 <b>${fresh.replace(/[<>&]/g,"")}</b>`;
-  };
-  matchPal=p;
-  onColor=k=>{if(!lock)judge(k)};   // 判定表示中に言った色は使わずに捨てる
-  if(rec)onStatus(null,true);
-  show();clk=startClock();
-}
-
-function result(mode,ms,miss){
+/* ===================== 結果 ===================== */
+function result(mode,ms,miss,bestLimit){
   release();
   const isBest=record(mode,ms,miss);
   if(miss===0&&mode!=="voice")snd.wake().then(()=>setTimeout(()=>snd.fanfare(),150),()=>{});
   const msg=miss===0?(isBest?"自己ベスト更新！":"ノーミス、おみごと"):`まちがい ${miss}問`;
   app.innerHTML=`<div class="screen"><div class="result">
     ${isBest?`<div class="badge">自己ベスト</div>`:""}
-    <div class="sub">${{list:"一覧で読み上げ",one:"1問ずつボタンで",voice:"声で答える"}[mode]}・${pal().map(c=>c.k).join("")}・${QN}問</div>
+    <div class="sub">${{list:"一覧で読み上げ",one:"1問ずつボタンで",voice:"声で答える"}[mode]}・${setLabel()}・${QN}問</div>
     <div class="big">${fmt(ms)}</div>
     <div class="sub">${msg}</div>
-    ${mode==="voice"&&unheard.length?`<div class="misslog">色として聞き取れなかった言葉：${unheard.map(t=>`「${t.replace(/[<>&]/g,"")}」`).join(" ")}</div>`:""}
+    ${bestLimit?`<div class="sub">いちばん短かった制限時間 ${fmt(bestLimit)}</div>`:""}
+    ${mode==="voice"&&unheard.length?`<div class="misslog">答えとして聞き取れなかった言葉：${unheard.map(t=>`「${esc(t)}」`).join(" ")}</div>`:""}
     <div class="row"><button class="go" id="again">もう一回</button><button class="alt" id="btnTop">メニューへ</button></div>
   </div></div>`;
   if(mode==="voice"){again.onclick=()=>endVoiceSession("voice");btnTop.onclick=()=>endVoiceSession("menu");return}
-  again.onclick=()=>{snd.unlock();countdown(mode==="list"?playList:playOne)};
+  again.onclick=()=>{snd.unlock();countdown(mode==="list"?playList:()=>playQuiz("one"))};
   btnTop.onclick=home;
 }
 
