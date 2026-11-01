@@ -130,7 +130,7 @@ const COLORS=[
   {k:"赤",v:"var(--c-red)"},{k:"青",v:"var(--c-blue)"},{k:"黄",v:"var(--c-yellow)"},
   {k:"緑",v:"var(--c-green)"},{k:"紫",v:"var(--c-purple)"},{k:"白",v:"var(--c-white)"}];
 const QN=20;
-const APP_VER="11";
+const APP_VER="12";
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 // 使う色（COLORSの番号）。最低3色
@@ -323,9 +323,21 @@ let voiceLang=store.get("iroyomi.voiceLang","ja");   // "ja"=日本語で答え�
    ・切れたときの再起動は間をあけ、くり返し切れるときはあきらめて止める
    ・画面を閉じたり別アプリに切り替えたら、すぐ音声認識を終了する */
 let rec=null,srObj=null,voiceActive=false,restartT=null,restarts=[],voiceUsed=false;
-let onHeard=()=>false,onStatus=()=>{},onTry=null,onGiveUp=()=>{};
+// matchPal: 判定に使う色 / onColor(k): 新しく色が聞こえたとき / onStatus(text,on): 表示の更新
+let matchPal=[],onColor=()=>{},onStatus=()=>{},onGiveUp=()=>{};
 let unheard=[];
 function missHeard(t){t=t.trim();if(t&&!unheard.includes(t)){unheard.push(t);if(unheard.length>12)unheard.shift()}}
+/* 文字列に出てくる色を、前から順にすべて拾う（例：「あかあおえーと赤」→ 赤,青,赤） */
+function findAll(text,p){
+  const words=[];p.forEach((c,k)=>VARIANTS[c.k].forEach(v=>{const w=toHira(v);if(w)words.push({w,k})}));
+  const out=[];let i=0;
+  while(i<text.length){
+    let hit=null;
+    for(const x of words)if(text.startsWith(x.w,i)&&(!hit||x.w.length>hit.w.length))hit=x;
+    if(hit){out.push({k:hit.k,at:i,end:i+hit.w.length});i+=hit.w.length}else i++;
+  }
+  return out;
+}
 function findColor(text,p){
   let best=null;
   p.forEach((c,k)=>VARIANTS[c.k].forEach(v=>{
@@ -358,19 +370,23 @@ function listen(){
   if(!srObj)srObj=new SR();
   const r=srObj;rec=r;r.lang=voiceLang==="en"?"en-US":"ja-JP";r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
   voiceActive=true;
-  const used={};
+  /* iPadは聞き取った言葉をあとから書き直すことがある（「あか」→「赤」など）。
+     文字の位置で区切ると書き直しでずれて前の答えを拾ってしまうので、
+     「何個目の色まで使ったか」を数えて、それより後に出てきた色だけを新しい答えにする */
+  const usedCount={};
   r.onresult=e=>{
     if(rec!==r)return;
     for(let i=e.resultIndex;i<e.results.length;i++){
       const res=e.results[i];
-      // 候補が複数返ってきた場合、色が見つかる候補を優先する
-      let text=toHira(res[0].transcript);
-      for(let a=1;a<res.length;a++){const t=toHira(res[a].transcript);if(onTry&&onTry(t.slice(used[i]||0))){text=t;break}}
-      if(text.length<(used[i]||0))used[i]=0;
-      const fresh=text.slice(used[i]||0);
-      if(fresh)onStatus(fresh);   // 前の問題で使った言葉は除いて、新しく聞こえた分だけ表示
-      if(fresh){const hit=onHeard(fresh,end=>{used[i]=(used[i]||0)+end});
-        if(!hit&&res.isFinal)missHeard(res[0].transcript)}
+      // 候補が複数あれば、色がいちばん多く見つかる候補を使う
+      let text=toHira(res[0].transcript),ms=findAll(text,matchPal);
+      for(let a=1;a<res.length;a++){const t=toHira(res[a].transcript),m=findAll(t,matchPal);if(m.length>ms.length){text=t;ms=m}}
+      let used=Math.min(usedCount[i]||0,ms.length);   // 書き直しで色が減ったときは数を合わせる（0には戻さない）
+      const tail=text.slice(used>0?ms[used-1].end:0);
+      if(tail)onStatus(tail);
+      for(;used<ms.length;used++){usedCount[i]=used+1;onColor(ms[used].k)}
+      usedCount[i]=Math.max(usedCount[i]||0,used);
+      if(res.isFinal&&tail&&!findAll(tail,matchPal).length)missHeard(tail);
     }
   };
   r.onstart=()=>{if(rec===r)onStatus(null,true)};
@@ -412,7 +428,7 @@ function prepVoice(){
 }
 function startVoice(){
   prepVoice();
-  onHeard=()=>false;onStatus=()=>{};onTry=null;onGiveUp=()=>{};
+  matchPal=pal();onColor=()=>{};onStatus=()=>{};onGiveUp=()=>{};
   listen();                            // タップした瞬間に開始（マイク許可を出すため）
   const el=document.getElementById("count");let n=3;el.hidden=false;el.textContent=n;
   const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;if(voiceActive||rec||restartT)playVoice()}else el.textContent=n},700);
@@ -439,15 +455,9 @@ function startTest(){
     if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
     if(fresh&&r)r.innerHTML=`聞こえた言葉 <b>${fresh.replace(/[<>&]/g,"")}</b>`;
   };
-  onTry=null;onGiveUp=()=>{};
-  onHeard=(fresh,consume)=>{
-    const f=findColor(fresh,p);
-    if(f){consume(f.end);const c=p[f.k];hit.textContent=c.k;hit.style.color=c.v;
-      lines.unshift(`「${fresh.replace(/[<>&]/g,"")}」→ ${c.k}`)}
-    else lines.unshift(`「${fresh.replace(/[<>&]/g,"")}」→ 色として判定できず`);
-    log.textContent=lines.slice(0,8).join("　／　");
-    return !!f;
-  };
+  matchPal=p;onGiveUp=()=>{};
+  onColor=k=>{const c=p[k];hit.textContent=c.k;hit.style.color=c.v;
+    lines.unshift(c.k);log.textContent="判定した色（新しい順）："+lines.slice(0,12).join("・")};
   listen();
 }
 
@@ -480,13 +490,8 @@ function playVoice(){
     if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
     if(fresh&&h&&!lock)h.innerHTML=`聞こえた言葉 <b>${fresh.replace(/[<>&]/g,"")}</b>`;
   };
-  onHeard=(fresh,consume)=>{
-    if(lock){consume(fresh.length);return} // 判定表示中に言った言葉は捨てる
-    const f=findColor(fresh,p);
-    if(f){consume(f.end);judge(f.k);return true}
-    return false;
-  };
-  onTry=t=>!!findColor(t,p);
+  matchPal=p;
+  onColor=k=>{if(!lock)judge(k)};   // 判定表示中に言った色は使わずに捨てる
   if(rec)onStatus(null,true);
   show();clk=startClock();
 }
