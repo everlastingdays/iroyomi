@@ -130,7 +130,7 @@ const COLORS=[
   {k:"赤",v:"var(--c-red)"},{k:"青",v:"var(--c-blue)"},{k:"黄",v:"var(--c-yellow)"},
   {k:"緑",v:"var(--c-green)"},{k:"紫",v:"var(--c-purple)"},{k:"白",v:"var(--c-white)"}];
 const QN=20;
-const APP_VER="9";
+const APP_VER="10";
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 // 使う色（COLORSの番号）。最低3色
@@ -148,6 +148,7 @@ let soundOn=store.get("iroyomi.sound",true);
 const snd={ctx:null,
   unlock(){if(!soundOn)return;try{if(!this.ctx){const A=window.AudioContext||window.webkitAudioContext;if(A)this.ctx=new A()}
     if(this.ctx&&this.ctx.state!=="running")this.ctx.resume()}catch(e){}},
+  close(){const c=this.ctx;this.ctx=null;try{c&&c.close()}catch(e){}},
   sleep(){try{if(this.ctx&&this.ctx.state==="running")return this.ctx.suspend()}catch(e){}return Promise.resolve()},
   wake(){try{if(this.ctx&&this.ctx.state!=="running")return this.ctx.resume()}catch(e){}return Promise.resolve()},
   tone(f,start,dur,{type="sine",vol=.35,decay=true,to=null}={}){
@@ -236,7 +237,7 @@ function home(){
        <p>文字が1つずつ出ます。色を声に出しながら、その色のボタンを押します。${QN}問のタイムとまちがい数。</p>
        <div class="best">ベスト ${O.best?fmt(O.best):"―"}（ノーミス）</div></button>
      <button class="mode" id="mVoice" ${SR?"":"disabled"}><h2>声で答える（試験版）</h2>
-       <p>${SR?`文字が1つずつ出ます。色を${voiceLang==="en"?"英語で":""}声に出すだけで自動で判定して次へ進みます。${QN}問のタイムとまちがい数。`:"このブラウザでは音声認識が使えません。iPadのSafariで開いてください。"}</p>
+       <p>${SR?`文字が1つずつ出ます。色を${voiceLang==="en"?"英語で":""}声に出すだけで自動で判定して次へ進みます。${QN}問のタイムとまちがい数。<br>※音声認識を安定させるため、このモードでは効果音は鳴りません`:"このブラウザでは音声認識が使えません。iPadのSafariで開いてください。"}</p>
        <div class="best">ベスト ${V.best?fmt(V.best):"―"}（ノーミス）</div></button>
    </div>
    <div class="ver">いろよみ 版 ${APP_VER}</div>
@@ -314,8 +315,17 @@ const VARIANTS={
 const EN_NAME={"赤":"red","青":"blue","黄":"yellow","緑":"green","紫":"purple","白":"white"};
 const toHira=t=>t.replace(/[ァ-ヶ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0x60)).toLowerCase().replace(/[\s。、．，,.！？!?'"’\-]/g,"");
 let voiceLang=store.get("iroyomi.voiceLang","ja");   // "ja"=日本語で答える / "en"=英語で答える
-let rec=null,voiceActive=false;
-function stopVoice(){voiceActive=false;try{rec&&rec.abort()}catch(e){}rec=null}
+/* ---------- 音声認識 ----------
+   iPadの音声認識は、他のアプリの音声入力と共通の仕組みを使っている。
+   起動・停止をくり返すとiPad全体の音声入力が不安定になるので、
+   ・1回のゲーム中は音声認識を1つだけ起動し、問題ごとに止めたりしない
+   ・声モードでは効果音を鳴らさない（音の仕組みも完全に解放してから聞き始める）
+   ・切れたときの再起動は間をあけ、くり返し切れるときはあきらめて止める
+   ・画面を閉じたり別アプリに切り替えたら、すぐ音声認識を終了する */
+let rec=null,voiceActive=false,restartT=null,restarts=[];
+let onHeard=()=>false,onStatus=()=>{},onTry=null,onGiveUp=()=>{};
+let unheard=[];
+function missHeard(t){t=t.trim();if(t&&!unheard.includes(t)){unheard.push(t);if(unheard.length>12)unheard.shift()}}
 function findColor(text,p){
   let best=null;
   p.forEach((c,k)=>VARIANTS[c.k].forEach(v=>{
@@ -324,13 +334,26 @@ function findColor(text,p){
   }));
   return best;
 }
-/* 声モード：iPadは「音を鳴らす」と「マイクで聞く」を同時にやると聞き取りが止まることがあるので、
-   効果音を鳴らす間はマイクを止め、鳴り終わってからマイクを入れ直す */
-let onHeard=()=>false,onStatus=()=>{},onTry=null,startedCb=null;
-let unheard=[];
-function missHeard(t){t=t.trim();if(t&&!unheard.includes(t)){unheard.push(t);if(unheard.length>12)unheard.shift()}}
+function stopVoice(){
+  voiceActive=false;clearTimeout(restartT);restartT=null;
+  const r=rec;rec=null;
+  if(r){r.onresult=r.onstart=r.onerror=null;r.onend=null;try{r.stop()}catch(e){}try{r.abort()}catch(e){}}
+  try{onStatus(null,false)}catch(e){}
+}
+function voiceError(code){
+  stopVoice();stopTimer();release();
+  const why={"not-allowed":"マイクの使用が許可されていません。iPadの「設定」→「アプリ」→「Safari」→「マイク」を「許可」にしてから、もう一度試してください。",
+    "service-not-allowed":"音声認識が使えない状態です。①iPadの「設定」→「一般」→「キーボード」→「音声入力」をオンにする ②ホーム画面のアイコンからではなく、Safariで直接開く、の2つを試してください。",
+    "language-not-supported":"この言語の音声認識が使えません。「設定」→「一般」→「キーボード」→「音声入力の言語」に日本語（英語モードなら英語）があるか確認してください。",
+    "network":"音声認識にネット接続が必要と判断されました。このiPadではオフラインの音声認識が使えないようです。",
+    "audio-capture":"マイクがうまく使えませんでした。少し待ってからもう一度試してください。",
+    "gave-up":"音声認識が何度も途切れたので、iPadに負担をかけないよう止めました。Safariのこのタブを閉じて1分ほど待ってから、もう一度開いてください。"}[code]||`音声認識でエラーが起きました（${code}）。`;
+  app.innerHTML=`<div class="screen"><div class="result"><div class="err">${why}</div>
+    <div class="row"><button class="go" id="retry">もう一回試す</button><button class="alt" id="btnTop">メニューへ</button></div></div></div>`;
+  retry.onclick=()=>setTimeout(startVoice,0);btnTop.onclick=home;
+}
 function listen(){
-  stopVoice();
+  if(rec)return;                        // すでに聞いているときは新しく起動しない
   const r=new SR();rec=r;r.lang=voiceLang==="en"?"en-US":"ja-JP";r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
   voiceActive=true;
   const used={};
@@ -348,41 +371,41 @@ function listen(){
         if(!hit&&res.isFinal)missHeard(res[0].transcript)}
     }
   };
-  r.onstart=()=>{if(rec!==r)return;onStatus(null,true);if(startedCb){const f=startedCb;startedCb=null;f()}};
-  r.onend=()=>{if(rec!==r)return;if(voiceActive){try{r.start()}catch(e){}}else onStatus(null,false)};
+  r.onstart=()=>{if(rec===r)onStatus(null,true)};
   r.onerror=e=>{
     if(rec!==r)return;
-    if(e.error==="no-speech"||e.error==="aborted")return;
-    voiceActive=false;rec=null;stopTimer();release();
-    const why={"not-allowed":"マイクの使用が許可されていません。iPadの「設定」→「Safari」→「マイク」を「許可」にしてから、もう一度試してください。",
-      "service-not-allowed":"音声認識が使えない状態です。①iPadの「設定」→「一般」→「キーボード」→「音声入力」をオンにする ②ホーム画面のアイコンからではなく、Safariで直接開く、の2つを試してください。",
-      "language-not-supported":"この言語の音声認識が使えません。「設定」→「一般」→「キーボード」→「音声入力の言語」に日本語（英語モードなら英語）があるか確認してください。",
-      "network":"音声認識にネット接続が必要と判断されました。このiPadではオフラインの音声認識が使えないようです。",
-      "audio-capture":"マイクがうまく使えませんでした。メニューで効果音を「なし」にして試すと動く場合があります。"}[e.error]||`音声認識でエラーが起きました（${e.error}）。`;
-    app.innerHTML=`<div class="screen"><div class="result"><div class="err">${why}</div>
-      <div class="row"><button class="go" id="retry">もう一回試す</button><button class="alt" id="btnTop">メニューへ</button></div></div></div>`;
-    retry.onclick=startVoice;btnTop.onclick=home;
+    if(e.error==="no-speech"||e.error==="aborted")return;   // この後 onend が来るので、そちらで対応
+    voiceError(e.error);
   };
-  try{r.start()}catch(e){}
+  r.onend=()=>{
+    if(rec!==r)return;
+    rec=null;onStatus(null,false);
+    if(!voiceActive)return;
+    // 途切れたら少し待ってから聞き直す。30秒に6回以上途切れたらあきらめる
+    const now=Date.now();restarts=restarts.filter(t=>now-t<30000);restarts.push(now);
+    if(restarts.length>6){onGiveUp();voiceError("gave-up");return}
+    restartT=setTimeout(()=>{restartT=null;if(voiceActive&&!rec)listen()},400*restarts.length);
+  };
+  try{r.start()}catch(e){rec=null;voiceError("start-failed")}
 }
-// マイクが本当に聞き始めるまで待つ（最大1.5秒）
-function listenReady(){return new Promise(res=>{let done=false;const f=()=>{if(!done){done=true;setTimeout(res,200)}};
-  startedCb=f;listen();setTimeout(f,1500)})}
+// 画面を閉じた・別アプリに切り替えたときは、すぐ音声認識を終わらせる
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&voiceActive){stopVoice();home()}});
+window.addEventListener("pagehide",()=>{stopVoice();snd.close()});
+
+function prepVoice(){
+  stopVoice();snd.close();             // 効果音の仕組みを完全に解放してから聞き始める
+  unheard=[];restarts=[];keepAwake();
+}
 function startVoice(){
-  unheard=[];
-  // タップした瞬間に音とマイクの両方の許可を取っておく
-  snd.unlock();
-  listen();
-  onHeard=()=>false;onStatus=()=>{};onTry=null;
-  keepAwake();
-  // 声モードのカウントダウンは音なし（マイクを止めないため）
-  snd.sleep();
+  prepVoice();
+  onHeard=()=>false;onStatus=()=>{};onTry=null;onGiveUp=()=>{};
+  listen();                            // タップした瞬間に開始（マイク許可を出すため）
   const el=document.getElementById("count");let n=3;el.hidden=false;el.textContent=n;
-  const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;playVoice()}else el.textContent=n},700);
+  const t=setInterval(()=>{n--;if(n<=0){clearInterval(t);el.hidden=true;if(voiceActive||rec||restartT)playVoice()}else el.textContent=n},700);
 }
 /* 聞き取りテスト：iPadが何と聞き取っているかをそのまま表示する */
 function startTest(){
-  snd.unlock();snd.sleep();keepAwake();
+  prepVoice();
   const p=COLORS;
   app.innerHTML=`<div class="screen">
     <div class="bar"><button class="back" id="back">← もどる</button><div class="info">聞き取りテスト</div><div class="timer"></div></div>
@@ -398,14 +421,15 @@ function startTest(){
   back.onclick=()=>{stopVoice();home()};
   const lines=[];
   onStatus=(fresh,on)=>{
-    if(on!==undefined){mc.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
-    if(fresh)raw.innerHTML=`聞こえた言葉 <b>${fresh.replace(/[<>&]/g,"")}</b>`;
+    const m=document.getElementById("mc"),r=document.getElementById("raw");
+    if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
+    if(fresh&&r)r.innerHTML=`聞こえた言葉 <b>${fresh.replace(/[<>&]/g,"")}</b>`;
   };
-  onTry=null;
+  onTry=null;onGiveUp=()=>{};
   onHeard=(fresh,consume)=>{
     const f=findColor(fresh,p);
     if(f){consume(f.end);const c=p[f.k];hit.textContent=c.k;hit.style.color=c.v;
-      lines.unshift(`「${fresh.replace(/[<>&]/g,"")}」→ ${c.k}`);snd.wake().then(()=>{snd.beep(true);setTimeout(()=>snd.sleep(),400)});}
+      lines.unshift(`「${fresh.replace(/[<>&]/g,"")}」→ ${c.k}`)}
     else lines.unshift(`「${fresh.replace(/[<>&]/g,"")}」→ 色として判定できず`);
     log.textContent=lines.slice(0,8).join("　／　");
     return !!f;
@@ -428,22 +452,15 @@ function playVoice(){
   const judge=k=>{
     if(lock)return;lock=true;const ok=k===items[i].c;if(!ok)miss++;
     clk.pause();clearTimeout(skipT);
-    const withSound=soundOn&&snd.ctx;
-    if(withSound){stopVoice();onStatus(null,false)}   // 鳴らす前にマイクを止める
-    const go=()=>{
-      const clear=showJudge(st,ok,k,items[i].c,p);
-      const wait=withSound?(ok?1150:1100):(ok?OK_MS:NG_MS);
-      setTimeout(()=>{
-        clear();i++;hd.textContent="";
-        if(i>=QN){stopVoice();stopTimer();result("voice",clk.t(),miss);return}
-        const next=()=>{lock=false;show();clk.resume()};
-        // マイクが聞き始めてから次の文字を出す（早口で言って聞き逃すのを防ぐ）
-        if(withSound){const n2=()=>listenReady().then(next);snd.sleep().then(n2,n2)}else next();
-      },wait);
-    };
-    if(withSound)snd.wake().then(go,go);else go();
+    const clear=showJudge(st,ok,k,items[i].c,p);   // 声モードでは音は鳴らない（大きな○×だけ）
+    setTimeout(()=>{
+      clear();i++;
+      if(i>=QN){stopVoice();stopTimer();result("voice",clk.t(),miss);return}
+      lock=false;show();clk.resume();
+    },ok?OK_MS:NG_MS);
   };
   sk.onclick=()=>judge(-1);
+  onGiveUp=()=>clearTimeout(skipT);
   onStatus=(fresh,on)=>{
     const h=document.getElementById("hd"),m=document.getElementById("mc");
     if(on!==undefined&&m){m.classList.toggle("on",on);mt.textContent=on?"聞いています":"準備中…"}
@@ -456,13 +473,14 @@ function playVoice(){
     return false;
   };
   onTry=t=>!!findColor(t,p);
+  if(rec)onStatus(null,true);
   show();clk=startClock();
 }
 
 function result(mode,ms,miss){
   release();
   const isBest=record(mode,ms,miss);
-  if(miss===0)snd.wake().then(()=>setTimeout(()=>snd.fanfare(),150),()=>{});
+  if(miss===0&&mode!=="voice")snd.wake().then(()=>setTimeout(()=>snd.fanfare(),150),()=>{});
   const msg=miss===0?(isBest?"自己ベスト更新！":"ノーミス、おみごと"):`まちがい ${miss}問`;
   app.innerHTML=`<div class="screen"><div class="result">
     ${isBest?`<div class="badge">自己ベスト</div>`:""}
