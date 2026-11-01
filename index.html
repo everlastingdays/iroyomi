@@ -130,7 +130,7 @@ const COLORS=[
   {k:"赤",v:"var(--c-red)"},{k:"青",v:"var(--c-blue)"},{k:"黄",v:"var(--c-yellow)"},
   {k:"緑",v:"var(--c-green)"},{k:"紫",v:"var(--c-purple)"},{k:"白",v:"var(--c-white)"}];
 const QN=20;
-const APP_VER="10";
+const APP_VER="11";
 const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 // 使う色（COLORSの番号）。最低3色
@@ -248,11 +248,11 @@ function home(){
     level=colorSet.length;store.set("iroyomi.colors",colorSet);home()});
   app.querySelectorAll(".seg[data-cv]").forEach(b=>b.onclick=()=>{cvMode=b.dataset.cv;store.set("iroyomi.cv",cvMode);applyCv();home()});
   app.querySelectorAll(".seg[data-vl]").forEach(b=>b.onclick=()=>{voiceLang=b.dataset.vl;store.set("iroyomi.voiceLang",voiceLang);home()});
-  if(SR)micTest.onclick=startTest;
+  if(SR)micTest.onclick=()=>endVoiceSession("test");
   sndBtn.onclick=()=>{soundOn=!soundOn;store.set("iroyomi.sound",soundOn);snd.unlock();if(soundOn)snd.pinpon();home()};
   mList.onclick=()=>countdown(playList);
   mOne.onclick=()=>countdown(playOne);
-  if(SR)mVoice.onclick=startVoice;
+  if(SR)mVoice.onclick=()=>endVoiceSession("voice");
 }
 
 function countdown(next){
@@ -322,7 +322,7 @@ let voiceLang=store.get("iroyomi.voiceLang","ja");   // "ja"=日本語で答え�
    ・声モードでは効果音を鳴らさない（音の仕組みも完全に解放してから聞き始める）
    ・切れたときの再起動は間をあけ、くり返し切れるときはあきらめて止める
    ・画面を閉じたり別アプリに切り替えたら、すぐ音声認識を終了する */
-let rec=null,voiceActive=false,restartT=null,restarts=[];
+let rec=null,srObj=null,voiceActive=false,restartT=null,restarts=[],voiceUsed=false;
 let onHeard=()=>false,onStatus=()=>{},onTry=null,onGiveUp=()=>{};
 let unheard=[];
 function missHeard(t){t=t.trim();if(t&&!unheard.includes(t)){unheard.push(t);if(unheard.length>12)unheard.shift()}}
@@ -337,7 +337,7 @@ function findColor(text,p){
 function stopVoice(){
   voiceActive=false;clearTimeout(restartT);restartT=null;
   const r=rec;rec=null;
-  if(r){r.onresult=r.onstart=r.onerror=null;r.onend=null;try{r.stop()}catch(e){}try{r.abort()}catch(e){}}
+  if(r){r.onresult=r.onstart=r.onerror=null;r.onend=null;try{r.abort()}catch(e){}}
   try{onStatus(null,false)}catch(e){}
 }
 function voiceError(code){
@@ -350,11 +350,13 @@ function voiceError(code){
     "gave-up":"音声認識が何度も途切れたので、iPadに負担をかけないよう止めました。Safariのこのタブを閉じて1分ほど待ってから、もう一度開いてください。"}[code]||`音声認識でエラーが起きました（${code}）。`;
   app.innerHTML=`<div class="screen"><div class="result"><div class="err">${why}</div>
     <div class="row"><button class="go" id="retry">もう一回試す</button><button class="alt" id="btnTop">メニューへ</button></div></div></div>`;
-  retry.onclick=()=>setTimeout(startVoice,0);btnTop.onclick=home;
+  retry.onclick=()=>endVoiceSession("voice");btnTop.onclick=()=>endVoiceSession("menu");
 }
 function listen(){
   if(rec)return;                        // すでに聞いているときは新しく起動しない
-  const r=new SR();rec=r;r.lang=voiceLang==="en"?"en-US":"ja-JP";r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
+  // 1回のページ表示につき音声認識は1つだけ作り、使い回す（新しく作り直すとiPadが手放さなくなるため）
+  if(!srObj)srObj=new SR();
+  const r=srObj;rec=r;r.lang=voiceLang==="en"?"en-US":"ja-JP";r.continuous=true;r.interimResults=true;r.maxAlternatives=3;
   voiceActive=true;
   const used={};
   r.onresult=e=>{
@@ -386,10 +388,22 @@ function listen(){
     if(restarts.length>6){onGiveUp();voiceError("gave-up");return}
     restartT=setTimeout(()=>{restartT=null;if(voiceActive&&!rec)listen()},400*restarts.length);
   };
+  voiceUsed=true;
   try{r.start()}catch(e){rec=null;voiceError("start-failed")}
 }
+/* 声を使い終わったら、ページを読み込み直してマイクを確実に手放す。
+   （iPadのSafariは、止めてもページを開いている間はマイクを握ったままになることがあり、
+    そのままだと他のアプリの音声入力まで使えなくなるため）
+   next: "menu"=メニューへ / "voice"=声モードをもう一回 / "test"=聞き取りテスト */
+function endVoiceSession(next){
+  stopVoice();snd.close();
+  if(!voiceUsed){next==="voice"?startVoice():next==="test"?startTest():home();return}
+  try{sessionStorage.setItem("iroyomi.next",next||"menu")}catch(e){}
+  app.innerHTML=`<div class="screen"><div class="result"><div class="sub">マイクを片付けています…</div></div></div>`;
+  setTimeout(()=>location.reload(),150);
+}
 // 画面を閉じた・別アプリに切り替えたときは、すぐ音声認識を終わらせる
-document.addEventListener("visibilitychange",()=>{if(document.hidden&&voiceActive){stopVoice();home()}});
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&voiceUsed){stopVoice()}else if(!document.hidden&&voiceUsed&&!voiceActive&&document.getElementById("wd"))endVoiceSession("menu")});
 window.addEventListener("pagehide",()=>{stopVoice();snd.close()});
 
 function prepVoice(){
@@ -418,7 +432,7 @@ function startTest(){
     <div class="mic on" id="mc"><i></i><span id="mt">聞いています</span></div>
     <div class="hist" id="log"></div>
   </div>`;
-  back.onclick=()=>{stopVoice();home()};
+  back.onclick=()=>endVoiceSession("menu");
   const lines=[];
   onStatus=(fresh,on)=>{
     const m=document.getElementById("mc"),r=document.getElementById("raw");
@@ -446,7 +460,7 @@ function playVoice(){
     <p class="hint">${voiceLang==="en"?pal().map(c=>EN_NAME[c.k]).join("・")+" で答えます":"聞き取りにくいときは「あかいろ」「あおいろ」のように「いろ」を付けて言うと伝わりやすくなります"}</p>
     <div class="mic on" id="mc"><i></i><span id="mt">聞いています</span></div>
     <button class="skip" id="sk" hidden>聞き取れないのでとばす</button></div>`;
-  back.onclick=()=>{stopVoice();home()};
+  back.onclick=()=>endVoiceSession("menu");
   const show=()=>{const it=items[i];wd.textContent=p[it.w].k;wd.style.color=p[it.c].v;no.textContent=i+1;pg.style.width=(i/QN*100)+"%";
     hd.textContent="色を声に出してください";sk.hidden=true;clearTimeout(skipT);skipT=setTimeout(()=>{if(document.getElementById("sk"))sk.hidden=false},5000)};
   const judge=k=>{
@@ -490,11 +504,22 @@ function result(mode,ms,miss){
     ${mode==="voice"&&unheard.length?`<div class="misslog">色として聞き取れなかった言葉：${unheard.map(t=>`「${t.replace(/[<>&]/g,"")}」`).join(" ")}</div>`:""}
     <div class="row"><button class="go" id="again">もう一回</button><button class="alt" id="btnTop">メニューへ</button></div>
   </div></div>`;
-  again.onclick=()=>{snd.unlock();mode==="voice"?startVoice():countdown(mode==="list"?playList:playOne)};
+  if(mode==="voice"){again.onclick=()=>endVoiceSession("voice");btnTop.onclick=()=>endVoiceSession("menu");return}
+  again.onclick=()=>{snd.unlock();countdown(mode==="list"?playList:playOne)};
   btnTop.onclick=home;
 }
 
-home();
+function boot(){
+  let next=null;try{next=sessionStorage.getItem("iroyomi.next");sessionStorage.removeItem("iroyomi.next")}catch(e){}
+  if(next==="voice"||next==="test"){
+    app.innerHTML=`<div class="screen"><div class="result">
+      <div class="sub">${next==="voice"?"声で答える":"聞き取りテスト"}の準備ができました</div>
+      <div class="row"><button class="go" id="goNow" style="font-size:28px;padding:22px 48px">はじめる</button><button class="alt" id="btnTop">メニューへ</button></div>
+    </div></div>`;
+    goNow.onclick=next==="voice"?startVoice:startTest;btnTop.onclick=home;
+  }else home();
+}
+boot();
 if("serviceWorker" in navigator && location.protocol==="https:"){
   navigator.serviceWorker.register("sw.js").catch(()=>{});
 }
